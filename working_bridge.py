@@ -1,0 +1,244 @@
+#!/opt/homebrew/bin/python3.11
+"""
+Working MCP Bridge for FreeCAD
+Uses the correct MCP API for testing with Claude Desktop
+"""
+
+import asyncio
+import json
+import os
+import sys
+import socket
+from typing import Any
+
+# Add current directory to path
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+async def main():
+    """Run MCP server for FreeCAD integration"""
+    try:
+        # Import MCP components with correct API
+        import mcp.types as types
+        from mcp.server import NotificationOptions, Server
+        from mcp.server.models import InitializationOptions
+    except ImportError as e:
+        # Fallback error message
+        error_msg = {
+            "jsonrpc": "2.0",
+            "error": {
+                "code": -32000,
+                "message": f"MCP import failed: {e}"
+            }
+        }
+        print(json.dumps(error_msg), file=sys.stderr)
+        sys.exit(1)
+
+    # Create server
+    server = Server("freecad-ai-copilot")
+    
+    # Check if FreeCAD is available
+    socket_path = "/tmp/freecad_mcp.sock"
+    freecad_available = os.path.exists(socket_path)
+    
+    async def send_to_freecad(tool_name: str, args: dict) -> str:
+        """Send command to FreeCAD via Unix socket"""
+        try:
+            if not os.path.exists(socket_path):
+                return json.dumps({"error": "FreeCAD socket not available. Please start FreeCAD and switch to AI Copilot workbench"})
+            
+            # Create socket connection
+            sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            sock.connect(socket_path)
+            
+            # Send command
+            command = json.dumps({"tool": tool_name, "args": args})
+            sock.send(command.encode('utf-8'))
+            
+            # Receive response
+            response = sock.recv(4096).decode('utf-8')
+            sock.close()
+            
+            return response
+            
+        except Exception as e:
+            return json.dumps({"error": f"Socket communication error: {e}"})
+    
+    @server.list_tools()
+    async def handle_list_tools() -> list[types.Tool]:
+        """List available tools"""
+        base_tools = [
+            types.Tool(
+                name="check_freecad_connection",
+                description="Check if FreeCAD is running with AI Copilot workbench",
+                inputSchema={
+                    "type": "object",
+                    "properties": {},
+                }
+            ),
+            types.Tool(
+                name="test_echo",
+                description="Test tool that echoes back a message",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "message": {
+                            "type": "string",
+                            "description": "Message to echo back"
+                        }
+                    },
+                    "required": ["message"]
+                }
+            )
+        ]
+        
+        # Add FreeCAD tools if socket is available
+        if os.path.exists(socket_path):
+            freecad_tools = [
+                types.Tool(
+                    name="create_box",
+                    description="Create a box in FreeCAD with specified dimensions",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "length": {"type": "number", "description": "Box length in mm", "default": 10},
+                            "width": {"type": "number", "description": "Box width in mm", "default": 10},
+                            "height": {"type": "number", "description": "Box height in mm", "default": 10},
+                            "x": {"type": "number", "description": "X position", "default": 0},
+                            "y": {"type": "number", "description": "Y position", "default": 0},
+                            "z": {"type": "number", "description": "Z position", "default": 0}
+                        }
+                    }
+                ),
+                types.Tool(
+                    name="create_cylinder",
+                    description="Create a cylinder in FreeCAD",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "radius": {"type": "number", "description": "Cylinder radius in mm", "default": 5},
+                            "height": {"type": "number", "description": "Cylinder height in mm", "default": 10},
+                            "x": {"type": "number", "description": "X position", "default": 0},
+                            "y": {"type": "number", "description": "Y position", "default": 0},
+                            "z": {"type": "number", "description": "Z position", "default": 0}
+                        }
+                    }
+                ),
+                types.Tool(
+                    name="create_sphere",
+                    description="Create a sphere in FreeCAD",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "radius": {"type": "number", "description": "Sphere radius in mm", "default": 5},
+                            "x": {"type": "number", "description": "X position", "default": 0},
+                            "y": {"type": "number", "description": "Y position", "default": 0},
+                            "z": {"type": "number", "description": "Z position", "default": 0}
+                        }
+                    }
+                ),
+                types.Tool(
+                    name="get_screenshot",
+                    description="Take a screenshot of the current FreeCAD view",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "width": {"type": "integer", "description": "Screenshot width", "default": 800},
+                            "height": {"type": "integer", "description": "Screenshot height", "default": 600}
+                        }
+                    }
+                ),
+                types.Tool(
+                    name="list_all_objects",
+                    description="List all objects in the active FreeCAD document",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {}
+                    }
+                ),
+                types.Tool(
+                    name="activate_workbench",
+                    description="Activate a specific FreeCAD workbench",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "workbench_name": {"type": "string", "description": "Name of workbench to activate"}
+                        },
+                        "required": ["workbench_name"]
+                    }
+                ),
+                types.Tool(
+                    name="execute_python",
+                    description="Execute Python code in FreeCAD context",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "code": {"type": "string", "description": "Python code to execute"}
+                        },
+                        "required": ["code"]
+                    }
+                )
+            ]
+            return base_tools + freecad_tools
+        
+        return base_tools
+
+    @server.call_tool()
+    async def handle_call_tool(
+        name: str, arguments: dict[str, Any] | None
+    ) -> list[types.TextContent]:
+        """Handle tool calls"""
+        
+        if name == "check_freecad_connection":
+            status = {
+                "freecad_socket_exists": os.path.exists(socket_path),
+                "socket_path": socket_path,
+                "status": "FreeCAD running with AI Copilot workbench" if os.path.exists(socket_path) 
+                         else "FreeCAD not running. Please start FreeCAD and switch to AI Copilot workbench"
+            }
+            return [types.TextContent(
+                type="text",
+                text=json.dumps(status, indent=2)
+            )]
+            
+        elif name == "test_echo":
+            message = arguments.get("message", "No message provided") if arguments else "No arguments"
+            return [types.TextContent(
+                type="text", 
+                text=f"Bridge received: {message}"
+            )]
+            
+        # Route FreeCAD tools to socket
+        elif name in ["create_box", "create_cylinder", "create_sphere", "get_screenshot", 
+                      "list_all_objects", "activate_workbench", "execute_python"]:
+            args = arguments or {}
+            response = await send_to_freecad(name, args)
+            
+            return [types.TextContent(
+                type="text",
+                text=response
+            )]
+            
+        else:
+            return [types.TextContent(
+                type="text",
+                text=f"Unknown tool: {name}"
+            )]
+
+    # Run the server
+    import mcp.server.stdio
+    async with mcp.server.stdio.stdio_server() as (read_stream, write_stream):
+        await server.run(
+            read_stream,
+            write_stream,
+            InitializationOptions(
+                server_name="freecad-ai-copilot",
+                server_version="1.0.0",
+                capabilities=server.get_capabilities(
+                    notification_options=NotificationOptions(),
+                    experimental_capabilities={},
+                ),
+            ),
+        )
+
+if __name__ == "__main__":
+    asyncio.run(main())
