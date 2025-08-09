@@ -231,3 +231,5 @@ class AICopilotWorkbench(FreeCADGui.Workbench):
 
 # Register the workbench
 FreeCADGui.addWorkbench(AICopilotWorkbench())
+
+# Test: New workflow active
