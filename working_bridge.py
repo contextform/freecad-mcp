@@ -176,6 +176,132 @@ async def main():
                         },
                         "required": ["code"]
                     }
+                ),
+                # GUI Control Tools
+                types.Tool(
+                    name="run_command",
+                    description="Execute a FreeCAD GUI command",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "command": {"type": "string", "description": "FreeCAD command name (e.g. 'Std_New', 'Part_Box')"}
+                        },
+                        "required": ["command"]
+                    }
+                ),
+                types.Tool(
+                    name="new_document",
+                    description="Create a new FreeCAD document",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "name": {"type": "string", "description": "Document name", "default": "Unnamed"}
+                        }
+                    }
+                ),
+                types.Tool(
+                    name="save_document",
+                    description="Save the current document",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "filename": {"type": "string", "description": "File path to save (optional)"}
+                        }
+                    }
+                ),
+                types.Tool(
+                    name="set_view",
+                    description="Set the 3D view orientation",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "view_type": {"type": "string", "description": "View type: top, front, left, right, isometric, axonometric", "default": "isometric"}
+                        }
+                    }
+                ),
+                types.Tool(
+                    name="fit_all",
+                    description="Fit all objects in the 3D view",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {}
+                    }
+                ),
+                types.Tool(
+                    name="select_object",
+                    description="Select a specific object",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "object_name": {"type": "string", "description": "Name of object to select"}
+                        },
+                        "required": ["object_name"]
+                    }
+                ),
+                types.Tool(
+                    name="clear_selection",
+                    description="Clear all selected objects",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {}
+                    }
+                ),
+                types.Tool(
+                    name="get_selection",
+                    description="Get currently selected objects",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {}
+                    }
+                ),
+                types.Tool(
+                    name="hide_object",
+                    description="Hide an object from view",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "object_name": {"type": "string", "description": "Name of object to hide"}
+                        },
+                        "required": ["object_name"]
+                    }
+                ),
+                types.Tool(
+                    name="show_object",
+                    description="Show a hidden object",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "object_name": {"type": "string", "description": "Name of object to show"}
+                        },
+                        "required": ["object_name"]
+                    }
+                ),
+                types.Tool(
+                    name="delete_object",
+                    description="Delete an object",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "object_name": {"type": "string", "description": "Name of object to delete"}
+                        },
+                        "required": ["object_name"]
+                    }
+                ),
+                types.Tool(
+                    name="undo",
+                    description="Undo the last operation",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {}
+                    }
+                ),
+                types.Tool(
+                    name="redo",
+                    description="Redo the last undone operation",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {}
+                    }
                 )
             ]
             return base_tools + freecad_tools
@@ -209,7 +335,10 @@ async def main():
             
         # Route FreeCAD tools to socket
         elif name in ["create_box", "create_cylinder", "create_sphere", "get_screenshot", 
-                      "list_all_objects", "activate_workbench", "execute_python"]:
+                      "list_all_objects", "activate_workbench", "execute_python",
+                      "run_command", "new_document", "save_document", "set_view", "fit_all",
+                      "select_object", "clear_selection", "get_selection", "hide_object", 
+                      "show_object", "delete_object", "undo", "redo"]:
             args = arguments or {}
             response = await send_to_freecad(name, args)
             
