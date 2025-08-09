@@ -126,47 +126,6 @@ freecad-mcp/
 └── README.md                   # This file
 ```
 
-## Key Components
-
-### Auto-Start Service (`InitGui.py`)
-Global AI service that starts with FreeCAD and works from any workbench.
-
-### Socket Server (`socket_server.py`)
-19 tools for 3D modeling, GUI control, screenshots, and Python execution.
-
-### MCP Bridge (`working_bridge.py`)  
-Connects Claude Desktop to FreeCAD via MCP protocol.
-
-### Learning System (`event_observer.py` + `memory_system.py`)
-Observes user interactions and learns patterns for intelligent assistance.
-
-## Testing
-
-```bash
-# Test complete installation
-python3 test_installation.py
-
-# Test socket communication
-python3 test_socket.py
-
-# Test auto-start functionality
-python3 test_auto_start.py
-
-# Test GUI automation
-python3 test_gui_automation.py
-```
-
-## Advantages Over Other Approaches
-
-| Feature | This Project | External Scripts |
-|---------|-------------|------------------|
-| Runs inside FreeCAD | ✅ | ❌ |
-| Direct API access | ✅ | ❌ |
-| Event observation | ✅ | ❌ |
-| No restarts needed | ✅ | ❌ |
-| GUI automation | ✅ | Limited |
-| Memory system | ✅ | ❌ |
-
 ## Contributing
 
 Contributions welcome! Please submit pull requests or open issues.
@@ -174,12 +133,6 @@ Contributions welcome! Please submit pull requests or open issues.
 ## License
 
 LGPL-2.1-or-later (compatible with FreeCAD)
-
-## Acknowledgments
-
-- FreeCAD community for the excellent CAD platform
-- Anthropic for Claude and MCP protocol
-- Inspired by neka-nat/freecad-mcp for serialization approaches
 
 ---
 
