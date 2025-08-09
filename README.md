@@ -113,40 +113,47 @@ Example commands:
 ## Project Structure
 
 ```
-FreeCAD_MCP/
-├── working_bridge.py           # MCP bridge server (Python 3.11)
-├── mcp_server_enhanced.py      # Enhanced MCP implementation
-├── test_socket.py              # Testing utility
-└── AICopilot/                  # FreeCAD workbench
-    ├── InitGui.py              # Workbench initialization
-    ├── socket_server.py        # Embedded socket server
-    ├── event_observer.py       # User interaction tracking
-    ├── memory_system.py        # Learning and memory
-    └── commands/               # FreeCAD commands
+freecad-mcp/
+├── AICopilot/                  # Complete FreeCAD workbench
+│   ├── InitGui.py              # Auto-start global AI service
+│   ├── socket_server.py        # 19 tools + GUI automation
+│   ├── event_observer.py       # User interaction learning
+│   ├── memory_system.py        # Pattern recognition & memory
+│   ├── commands/               # Management commands
+│   └── Resources/icons/        # Workbench icons
+├── working_bridge.py           # MCP bridge (connects Claude Desktop)
+├── test_*.py                   # Testing utilities
+└── README.md                   # This file
 ```
 
 ## Key Components
 
+### Auto-Start Service (`InitGui.py`)
+Global AI service that starts with FreeCAD and works from any workbench.
+
 ### Socket Server (`socket_server.py`)
-Runs inside FreeCAD, receives commands via Unix socket, executes FreeCAD operations directly.
+19 tools for 3D modeling, GUI control, screenshots, and Python execution.
 
 ### MCP Bridge (`working_bridge.py`)  
-Translates between MCP protocol and socket commands, handles tool registration with Claude.
+Connects Claude Desktop to FreeCAD via MCP protocol.
 
-### Event Observer (`event_observer.py`)
-Tracks user interactions, failed attempts, and patterns for intelligent assistance.
-
-### Memory System (`memory_system.py`)
-Stores patterns, preferences, and successful operations for continuous learning.
+### Learning System (`event_observer.py` + `memory_system.py`)
+Observes user interactions and learns patterns for intelligent assistance.
 
 ## Testing
 
 ```bash
-# Test socket connection
+# Test complete installation
+python3 test_installation.py
+
+# Test socket communication
 python3 test_socket.py
 
-# Test screenshot
-python3 test_screenshot.py
+# Test auto-start functionality
+python3 test_auto_start.py
+
+# Test GUI automation
+python3 test_gui_automation.py
 ```
 
 ## Advantages Over Other Approaches
