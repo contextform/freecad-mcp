@@ -11,6 +11,13 @@ import time
 import asyncio
 from typing import Dict, Any
 
+# Import the ReAct agent
+try:
+    from freecad_agent import FreeCADReActAgent
+except ImportError as e:
+    FreeCAD.Console.PrintWarning(f"Could not import FreeCADReActAgent: {e}\n")
+    FreeCADReActAgent = None
+
 class FreeCADSocketServer:
     """Socket server that runs inside FreeCAD to receive MCP commands"""
     
@@ -20,10 +27,13 @@ class FreeCADSocketServer:
         self.is_running = False
         self.client_connections = []
         
-        # Don't try to import MCP since it's not available in FreeCAD
-        # Tools are implemented directly in this class
-        self.mcp_handler = None
-        FreeCAD.Console.PrintMessage("Socket server initialized with built-in tool handlers\n")
+        # Initialize the ReAct agent
+        if FreeCADReActAgent:
+            self.agent = FreeCADReActAgent(self)
+            FreeCAD.Console.PrintMessage("Socket server initialized with ReAct Agent\n")
+        else:
+            self.agent = None
+            FreeCAD.Console.PrintMessage("Socket server initialized without agent (import failed)\n")
             
     def start_server(self):
         """Start the Unix socket server"""
@@ -164,6 +174,8 @@ class FreeCADSocketServer:
             return self._undo(args)
         elif tool_name == "redo":
             return self._redo(args)
+        elif tool_name == "ai_agent":
+            return self._ai_agent(args)
         else:
             return f"Unknown tool: {tool_name}"
             
@@ -545,6 +557,23 @@ class FreeCADSocketServer:
             return "Redo completed"
         except Exception as e:
             return f"Error redoing: {e}"
+            
+    def _ai_agent(self, args: Dict[str, Any]) -> str:
+        """Handle requests through the ReAct Agent"""
+        try:
+            if not self.agent:
+                return "AI Agent not available (import failed)"
+                
+            request = args.get('request', '')
+            if not request:
+                return "No request provided for AI agent"
+                
+            # Process through the ReAct agent
+            result = self.agent.process_request(request)
+            return result
+            
+        except Exception as e:
+            return f"AI Agent error: {e}"
             
     def stop_server(self):
         """Stop the socket server"""

@@ -302,6 +302,20 @@ async def main():
                         "type": "object",
                         "properties": {}
                     }
+                ),
+                types.Tool(
+                    name="ai_agent",
+                    description="Process requests through the FreeCAD ReAct Agent (Claude Code-like intelligent assistant)",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "request": {
+                                "type": "string", 
+                                "description": "Natural language request for FreeCAD operations (e.g. 'Make all holes 2mm bigger', 'Create a motor mount', 'List all objects')"
+                            }
+                        },
+                        "required": ["request"]
+                    }
                 )
             ]
             return base_tools + freecad_tools
@@ -338,7 +352,7 @@ async def main():
                       "list_all_objects", "activate_workbench", "execute_python",
                       "run_command", "new_document", "save_document", "set_view", "fit_all",
                       "select_object", "clear_selection", "get_selection", "hide_object", 
-                      "show_object", "delete_object", "undo", "redo"]:
+                      "show_object", "delete_object", "undo", "redo", "ai_agent"]:
             args = arguments or {}
             response = await send_to_freecad(name, args)
             
