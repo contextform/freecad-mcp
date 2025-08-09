@@ -35,54 +35,66 @@ FreeCAD Core
 - Python 3.11+ (for MCP bridge)
 - Claude Desktop app
 
-## Installation
+## Quick Installation
 
-### Step 1: Install Python 3.11
-
-```bash
-# macOS
-brew install python@3.11
-
-# Ubuntu/Debian  
-sudo apt install python3.11 python3.11-venv
-
-# Windows
-# Download from python.org
-```
-
-### Step 2: Install MCP Dependencies
+### Step 1: Install Dependencies
 
 ```bash
-cd FreeCAD_MCP
-/opt/homebrew/bin/python3.11 -m pip install mcp
-```
-
-### Step 3: Install FreeCAD Workbench
-
-```bash
-# Copy workbench to FreeCAD Mod directory
-cp -r AICopilot ~/Library/Application\ Support/FreeCAD/Mod/  # macOS
+# Install Python 3.11 (required for MCP)
+brew install python@3.11                           # macOS
 # or
-cp -r AICopilot ~/.FreeCAD/Mod/  # Linux
+sudo apt install python3.11 python3.11-venv       # Linux  
+# or download from python.org                      # Windows
+
+# Install MCP
+/opt/homebrew/bin/python3.11 -m pip install mcp    # macOS
 # or  
-cp -r AICopilot %APPDATA%\FreeCAD\Mod\  # Windows
+python3.11 -m pip install mcp                      # Linux/Windows
 ```
 
-### Step 4: Configure Claude Desktop
+### Step 2: Install FreeCAD Workbench
 
-Add to Claude Desktop config (`~/Library/Application Support/Claude/claude_desktop_config.json`):
+```bash
+# Clone this repository
+git clone https://github.com/contextform/freecad-mcp.git
+cd freecad-mcp
+
+# Copy workbench to FreeCAD Mod directory
+cp -r AICopilot ~/Library/Application\ Support/FreeCAD/Mod/        # macOS
+# or
+cp -r AICopilot ~/.FreeCAD/Mod/                                     # Linux  
+# or
+cp -r AICopilot %APPDATA%\FreeCAD\Mod\                             # Windows
+```
+
+### Step 3: Configure Claude Desktop
+
+Add to your Claude Desktop config file:
+
+**macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
+**Windows**: `%APPDATA%\Claude\claude_desktop_config.json`  
+**Linux**: `~/.config/Claude/claude_desktop_config.json`
 
 ```json
 {
   "mcpServers": {
     "freecad-ai-copilot": {
       "command": "/opt/homebrew/bin/python3.11",
-      "args": ["/path/to/FreeCAD_MCP/working_bridge.py"],
+      "args": ["/full/path/to/freecad-mcp/working_bridge.py"],
       "env": {}
     }
   }
 }
 ```
+
+### Step 4: Start Using!
+
+1. **Start FreeCAD** - AI Copilot service auto-starts  
+2. **Go to any workbench** (Part Design, Sketcher, etc.)
+3. **Open Claude Desktop** - Should show "freecad-ai-copilot: running"
+4. **Start creating**: *"Create a box that's 50x30x20mm"*
+
+🎉 **That's it!** The AI Copilot works from any FreeCAD workbench!
 
 ## Usage
 
