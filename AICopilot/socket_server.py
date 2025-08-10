@@ -358,11 +358,37 @@ class FreeCADSocketServer:
             return f"Error running command: {e}"
             
     def _new_document(self, args: Dict[str, Any]) -> str:
-        """Create a new document"""
+        """Create a new document - safely creates without closing existing"""
         try:
             name = args.get('name', 'Unnamed')
-            doc = FreeCAD.newDocument(name)
-            return f"Created new document: {doc.Name}"
+            
+            # Try the safer GUI command approach first
+            try:
+                import FreeCADGui
+                if FreeCADGui:
+                    # Use GUI command which handles threading better
+                    FreeCADGui.runCommand('Std_New', 0)
+                    
+                    # Wait a moment for document creation
+                    import time
+                    time.sleep(0.1)
+                    
+                    # Set the document label if requested
+                    if FreeCAD.ActiveDocument and name != 'Unnamed':
+                        FreeCAD.ActiveDocument.Label = name
+                        
+                    return f"Created new document: {name}"
+            except:
+                pass
+            
+            # Fallback: Try direct API with error handling
+            try:
+                doc = FreeCAD.newDocument(name)
+                return f"Created new document: {doc.Name}"
+            except:
+                # If both methods fail, just report error
+                return "Unable to create new document - try using File menu directly"
+                
         except Exception as e:
             return f"Error creating document: {e}"
             

@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "freecad-copilot": {
+      "type": "stdio",
+      "command": "/opt/homebrew/bin/python3.11",
+      "args": ["/Users/josephwu/Documents/FreeCAD_MCP/working_bridge.py"]
+    }
+  }
+}

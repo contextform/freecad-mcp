@@ -22,19 +22,11 @@ async def main():
         from mcp.server import NotificationOptions, Server
         from mcp.server.models import InitializationOptions
     except ImportError as e:
-        # Fallback error message
-        error_msg = {
-            "jsonrpc": "2.0",
-            "error": {
-                "code": -32000,
-                "message": f"MCP import failed: {e}"
-            }
-        }
-        print(json.dumps(error_msg), file=sys.stderr)
+        # MCP import failed - exit silently to avoid STDIO corruption
         sys.exit(1)
 
-    # Create server
-    server = Server("freecad-ai-copilot")
+    # Create server (name must match config!)
+    server = Server("ctxform")
     
     # Check if FreeCAD is available
     socket_path = "/tmp/freecad_mcp.sock"
@@ -374,7 +366,7 @@ async def main():
             read_stream,
             write_stream,
             InitializationOptions(
-                server_name="freecad-ai-copilot",
+                server_name="ctxform",
                 server_version="1.0.0",
                 capabilities=server.get_capabilities(
                     notification_options=NotificationOptions(),
