@@ -162,18 +162,70 @@ Use the mcp__ctxform__ai tool with request="Position the cylinder on top of the 
 
 ## Available Tools
 
-| Tool | Description | Example |
-|------|-------------|---------|
-| `mcp__ctxform__check_freecad_connection` | Check FreeCAD connection | Basic connectivity test |
-| `mcp__ctxform__box` | Create boxes | `length=30, width=20, height=15` |
-| `mcp__ctxform__cylinder` | Create cylinders | `radius=8, height=25` |
-| `mcp__ctxform__sphere` | Create spheres | `radius=10` |
-| `mcp__ctxform__screenshot` | Take screenshots | `width=800, height=600` |
-| `mcp__ctxform__list_objects` | List all objects | Returns object names and types |
-| `mcp__ctxform__python` | Execute Python in FreeCAD | `code="App.newDocument()"` |
-| `mcp__ctxform__ai` | Natural language agent | `request="Create motor mount"` |
-| `mcp__ctxform__new_document` | Create new document | `name="Project1"` |
-| `mcp__ctxform__save_document` | Save document | Auto or with filename |
+### **Connection & Status**
+mcp__ctxform__check_freecad_connection: Check if FreeCAD is running with AI Copilot workbench.
+mcp__ctxform__test_echo: Test tool that echoes back a message for connectivity verification.
+
+### **Basic Shape Creation**
+mcp__ctxform__create_box: Create a box in FreeCAD with specified dimensions (length, width, height).
+mcp__ctxform__create_cylinder: Create a cylinder in FreeCAD with radius and height parameters.
+mcp__ctxform__create_sphere: Create a sphere in FreeCAD with specified radius.
+mcp__ctxform__create_cone: Create a cone with configurable top/bottom radius and height.
+mcp__ctxform__create_torus: Create a torus (donut shape) with major and minor radius.
+mcp__ctxform__create_wedge: Create a wedge (triangular prism) with full dimensional control.
+
+### **Boolean Operations**
+mcp__ctxform__fuse_objects: Fuse (union) two or more objects together into a single solid.
+mcp__ctxform__cut_objects: Cut (subtract) objects from a base object for complex shapes.
+mcp__ctxform__common_objects: Find common (intersection) of two or more objects.
+
+### **Object Transformations**
+mcp__ctxform__move_object: Move (translate) an object to a new position in 3D space.
+mcp__ctxform__rotate_object: Rotate an object around X, Y, or Z axis by specified degrees.
+mcp__ctxform__copy_object: Create a copy of an object with optional position offset.
+mcp__ctxform__array_object: Create a linear array of an object with configurable spacing.
+
+### **Part Design**
+mcp__ctxform__create_sketch: Create a new sketch on XY, XZ, or YZ plane for advanced modeling.
+mcp__ctxform__pad_sketch: Extrude a sketch to create a solid (pad operation) with specified length.
+mcp__ctxform__pocket_sketch: Cut a sketch from a solid (pocket operation) with specified depth.
+mcp__ctxform__fillet_edges: Add fillets (rounded edges) to an object with configurable radius.
+
+### **Analysis Tools**
+mcp__ctxform__measure_distance: Measure distance between two objects or their centers of mass.
+mcp__ctxform__get_volume: Calculate the volume of an object in cubic millimeters.
+mcp__ctxform__get_bounding_box: Get the bounding box dimensions and envelope of an object.
+mcp__ctxform__get_mass_properties: Get comprehensive mass properties (volume, area, center of mass).
+
+### **Document Management**
+mcp__ctxform__new_document: Create a new FreeCAD document with optional custom name.
+mcp__ctxform__save_document: Save the current document to file with optional filename.
+mcp__ctxform__list_all_objects: List all objects in the active FreeCAD document.
+
+### **View & Visualization**
+mcp__ctxform__get_screenshot: Take a screenshot of the current FreeCAD view as base64 image.
+mcp__ctxform__set_view: Set the 3D view orientation (top, front, left, right, isometric).
+mcp__ctxform__fit_all: Fit all objects in the 3D view for optimal viewing.
+
+### **Selection & Visibility**
+mcp__ctxform__select_object: Select a specific object by name for operations.
+mcp__ctxform__clear_selection: Clear all selected objects in the document.
+mcp__ctxform__get_selection: Get currently selected objects and their details.
+mcp__ctxform__hide_object: Hide an object from view while keeping it in document.
+mcp__ctxform__show_object: Show a previously hidden object in the view.
+mcp__ctxform__delete_object: Delete an object permanently from the document.
+
+### **History & Workflow**
+mcp__ctxform__undo: Undo the last operation performed in FreeCAD.
+mcp__ctxform__redo: Redo the last undone operation in FreeCAD.
+
+### **Advanced Features**
+mcp__ctxform__execute_python: Execute arbitrary Python code in FreeCAD context for custom operations.
+mcp__ctxform__run_command: Execute a FreeCAD GUI command by name for advanced control.
+mcp__ctxform__activate_workbench: Activate a specific FreeCAD workbench (Part Design, Sketcher, etc.).
+
+### **AI Assistant**
+mcp__ctxform__ai_agent: Process requests through the FreeCAD ReAct Agent for natural language CAD operations.
 
 ## Project Structure
 
