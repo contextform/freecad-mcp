@@ -129,6 +129,245 @@ async def main():
                     }
                 ),
                 types.Tool(
+                    name="create_cone",
+                    description="Create a cone in FreeCAD",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "radius1": {"type": "number", "description": "Bottom radius in mm", "default": 5},
+                            "radius2": {"type": "number", "description": "Top radius in mm", "default": 0},
+                            "height": {"type": "number", "description": "Cone height in mm", "default": 10},
+                            "x": {"type": "number", "description": "X position", "default": 0},
+                            "y": {"type": "number", "description": "Y position", "default": 0},
+                            "z": {"type": "number", "description": "Z position", "default": 0}
+                        }
+                    }
+                ),
+                types.Tool(
+                    name="create_torus",
+                    description="Create a torus (donut shape) in FreeCAD",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "radius1": {"type": "number", "description": "Major radius (from center to tube center) in mm", "default": 10},
+                            "radius2": {"type": "number", "description": "Minor radius (tube thickness) in mm", "default": 3},
+                            "x": {"type": "number", "description": "X position", "default": 0},
+                            "y": {"type": "number", "description": "Y position", "default": 0},
+                            "z": {"type": "number", "description": "Z position", "default": 0}
+                        }
+                    }
+                ),
+                types.Tool(
+                    name="create_wedge",
+                    description="Create a wedge (triangular prism) in FreeCAD",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "xmin": {"type": "number", "description": "Minimum X dimension in mm", "default": 0},
+                            "ymin": {"type": "number", "description": "Minimum Y dimension in mm", "default": 0},
+                            "zmin": {"type": "number", "description": "Minimum Z dimension in mm", "default": 0},
+                            "x2min": {"type": "number", "description": "Minimum X2 dimension in mm", "default": 2},
+                            "x2max": {"type": "number", "description": "Maximum X2 dimension in mm", "default": 8},
+                            "xmax": {"type": "number", "description": "Maximum X dimension in mm", "default": 10},
+                            "ymax": {"type": "number", "description": "Maximum Y dimension in mm", "default": 10},
+                            "zmax": {"type": "number", "description": "Maximum Z dimension in mm", "default": 10}
+                        }
+                    }
+                ),
+                # === Boolean Operations ===
+                types.Tool(
+                    name="fuse_objects",
+                    description="Fuse (union) two or more objects together",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "objects": {"type": "array", "items": {"type": "string"}, "description": "List of object names to fuse"},
+                            "name": {"type": "string", "description": "Name for the result object", "default": "Fusion"}
+                        },
+                        "required": ["objects"]
+                    }
+                ),
+                types.Tool(
+                    name="cut_objects",
+                    description="Cut (subtract) objects from a base object",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "base": {"type": "string", "description": "Base object name"},
+                            "tools": {"type": "array", "items": {"type": "string"}, "description": "Objects to subtract"},
+                            "name": {"type": "string", "description": "Name for the result object", "default": "Cut"}
+                        },
+                        "required": ["base", "tools"]
+                    }
+                ),
+                types.Tool(
+                    name="common_objects",
+                    description="Find common (intersection) of two or more objects",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "objects": {"type": "array", "items": {"type": "string"}, "description": "List of object names to intersect"},
+                            "name": {"type": "string", "description": "Name for the result object", "default": "Common"}
+                        },
+                        "required": ["objects"]
+                    }
+                ),
+                # === Transformation Tools ===
+                types.Tool(
+                    name="move_object",
+                    description="Move (translate) an object to a new position",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "object_name": {"type": "string", "description": "Name of object to move"},
+                            "x": {"type": "number", "description": "X displacement in mm", "default": 0},
+                            "y": {"type": "number", "description": "Y displacement in mm", "default": 0},
+                            "z": {"type": "number", "description": "Z displacement in mm", "default": 0}
+                        },
+                        "required": ["object_name"]
+                    }
+                ),
+                types.Tool(
+                    name="rotate_object",
+                    description="Rotate an object around an axis",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "object_name": {"type": "string", "description": "Name of object to rotate"},
+                            "axis": {"type": "string", "description": "Rotation axis", "enum": ["x", "y", "z"], "default": "z"},
+                            "angle": {"type": "number", "description": "Rotation angle in degrees", "default": 90}
+                        },
+                        "required": ["object_name"]
+                    }
+                ),
+                types.Tool(
+                    name="copy_object",
+                    description="Create a copy of an object",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "object_name": {"type": "string", "description": "Name of object to copy"},
+                            "name": {"type": "string", "description": "Name for the copy", "default": "Copy"},
+                            "x": {"type": "number", "description": "X offset for copy", "default": 0},
+                            "y": {"type": "number", "description": "Y offset for copy", "default": 0},
+                            "z": {"type": "number", "description": "Z offset for copy", "default": 0}
+                        },
+                        "required": ["object_name"]
+                    }
+                ),
+                types.Tool(
+                    name="array_object",
+                    description="Create a linear array of an object",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "object_name": {"type": "string", "description": "Name of object to array"},
+                            "count": {"type": "integer", "description": "Number of copies", "default": 3},
+                            "spacing_x": {"type": "number", "description": "X spacing between copies", "default": 10},
+                            "spacing_y": {"type": "number", "description": "Y spacing between copies", "default": 0},
+                            "spacing_z": {"type": "number", "description": "Z spacing between copies", "default": 0}
+                        },
+                        "required": ["object_name"]
+                    }
+                ),
+                # === Part Design Tools ===
+                types.Tool(
+                    name="create_sketch",
+                    description="Create a new sketch on a plane",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "plane": {"type": "string", "description": "Sketch plane", "enum": ["XY", "XZ", "YZ"], "default": "XY"},
+                            "name": {"type": "string", "description": "Sketch name", "default": "Sketch"}
+                        }
+                    }
+                ),
+                types.Tool(
+                    name="pad_sketch",
+                    description="Extrude a sketch to create a solid (pad operation)",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "sketch_name": {"type": "string", "description": "Name of sketch to extrude"},
+                            "length": {"type": "number", "description": "Extrusion length in mm", "default": 10},
+                            "name": {"type": "string", "description": "Name for the pad", "default": "Pad"}
+                        },
+                        "required": ["sketch_name"]
+                    }
+                ),
+                types.Tool(
+                    name="pocket_sketch",
+                    description="Cut a sketch from a solid (pocket operation)",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "sketch_name": {"type": "string", "description": "Name of sketch to cut"},
+                            "length": {"type": "number", "description": "Cut depth in mm", "default": 5},
+                            "name": {"type": "string", "description": "Name for the pocket", "default": "Pocket"}
+                        },
+                        "required": ["sketch_name"]
+                    }
+                ),
+                types.Tool(
+                    name="fillet_edges",
+                    description="Add fillets (rounded edges) to an object",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "object_name": {"type": "string", "description": "Name of object to fillet"},
+                            "radius": {"type": "number", "description": "Fillet radius in mm", "default": 1},
+                            "name": {"type": "string", "description": "Name for the filleted object", "default": "Fillet"}
+                        },
+                        "required": ["object_name"]
+                    }
+                ),
+                # === Analysis Tools ===
+                types.Tool(
+                    name="measure_distance",
+                    description="Measure distance between two objects or points",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "object1": {"type": "string", "description": "First object name"},
+                            "object2": {"type": "string", "description": "Second object name"}
+                        },
+                        "required": ["object1", "object2"]
+                    }
+                ),
+                types.Tool(
+                    name="get_volume",
+                    description="Calculate the volume of an object",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "object_name": {"type": "string", "description": "Name of object to analyze"}
+                        },
+                        "required": ["object_name"]
+                    }
+                ),
+                types.Tool(
+                    name="get_bounding_box",
+                    description="Get the bounding box dimensions of an object",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "object_name": {"type": "string", "description": "Name of object to analyze"}
+                        },
+                        "required": ["object_name"]
+                    }
+                ),
+                types.Tool(
+                    name="get_mass_properties",
+                    description="Get mass properties (volume, center of mass, etc.) of an object",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "object_name": {"type": "string", "description": "Name of object to analyze"}
+                        },
+                        "required": ["object_name"]
+                    }
+                ),
+                types.Tool(
                     name="get_screenshot",
                     description="Take a screenshot of the current FreeCAD view",
                     inputSchema={
@@ -340,7 +579,12 @@ async def main():
             )]
             
         # Route FreeCAD tools to socket
-        elif name in ["create_box", "create_cylinder", "create_sphere", "get_screenshot", 
+        elif name in ["create_box", "create_cylinder", "create_sphere", "create_cone", 
+                      "create_torus", "create_wedge", "get_screenshot", 
+                      "fuse_objects", "cut_objects", "common_objects",
+                      "move_object", "rotate_object", "copy_object", "array_object",
+                      "create_sketch", "pad_sketch", "pocket_sketch", "fillet_edges",
+                      "measure_distance", "get_volume", "get_bounding_box", "get_mass_properties",
                       "list_all_objects", "activate_workbench", "execute_python",
                       "run_command", "new_document", "save_document", "set_view", "fit_all",
                       "select_object", "clear_selection", "get_selection", "hide_object", 
