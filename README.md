@@ -54,8 +54,14 @@ sudo apt install python3.11 python3.11-venv       # Linux
 # or  
 python3.11 -m pip install mcp                      # Linux/Windows
 
-# Install Claude Code
-npm install -g @anthropics/claude-code             # All platforms
+# Install Claude Code (choose one method)
+npm install -g claude-code                          # NPM (recommended)
+# or
+brew install claude-code                            # Homebrew (macOS)
+# or download from: https://github.com/anthropics/claude-code/releases
+
+# Verify installation
+claude --version
 ```
 
 ### Step 2: Install FreeCAD Workbench
