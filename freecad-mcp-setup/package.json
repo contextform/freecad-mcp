@@ -1,6 +1,6 @@
 {
   "name": "freecad-mcp-setup",
-  "version": "1.0.6",
+  "version": "1.0.7",
   "description": "Easy installer for FreeCAD MCP - Control FreeCAD with Claude AI",
   "main": "index.js",
   "bin": {

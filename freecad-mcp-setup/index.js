@@ -407,8 +407,9 @@ async function registerMCPServer() {
       );
     }
     
-    // Register the server
-    const command = `claude mcp add freecad python3 "${bridgePath}"`;
+    // Register the server with platform-appropriate Python command
+    const pythonCmd = os.platform() === 'win32' ? 'python' : 'python3';
+    const command = `claude mcp add freecad ${pythonCmd} "${bridgePath}"`;
     execSync(command, { stdio: 'inherit' });
     
     logSuccess('MCP server registered with Claude Code');
