@@ -86,6 +86,38 @@ The installer works with Claude Code by default. For Claude Desktop users, after
 - **macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
 - **Windows**: `%APPDATA%/Claude/claude_desktop_config.json`
 
+### 🔧 Manual Installation (Developers)
+
+**For developers who prefer full control:**
+
+```bash
+# Clone the repository
+git clone https://github.com/contextform/freecad-mcp.git
+cd freecad-mcp
+
+# Install dependencies
+python3 -m pip install mcp
+
+# Install FreeCAD workbench (choose your OS):
+# macOS:
+cp -r AICopilot ~/Library/Application\ Support/FreeCAD/Mod/
+
+# Linux:
+# cp -r AICopilot ~/.local/share/FreeCAD/Mod/
+
+# Windows:
+# cp -r AICopilot %APPDATA%\FreeCAD\Mod\
+
+# Register MCP server with full path
+claude mcp add freecad python3 "$(pwd)/working_bridge.py"
+```
+
+**Benefits of manual installation:**
+- Full source code access for modification
+- Easy development and testing
+- Custom installation paths
+- Direct git workflow for contributions
+
 ## 🚀 What You Can Do
 
 **Create 3D Objects:**
