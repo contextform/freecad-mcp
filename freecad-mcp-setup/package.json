@@ -1,0 +1,31 @@
+{
+  "name": "freecad-mcp-setup",
+  "version": "1.0.0",
+  "description": "Easy installer for FreeCAD MCP - Control FreeCAD with Claude AI",
+  "main": "index.js",
+  "bin": {
+    "freecad-mcp": "./index.js"
+  },
+  "scripts": {
+    "test": "node test.js"
+  },
+  "keywords": [
+    "freecad",
+    "mcp",
+    "claude",
+    "ai",
+    "cad",
+    "installer"
+  ],
+  "author": "FreeCAD MCP Contributors",
+  "license": "LGPL-2.1-or-later",
+  "engines": {
+    "node": ">=14.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/contextform/freecad-mcp.git"
+  },
+  "homepage": "https://github.com/contextform/freecad-mcp",
+  "preferGlobal": true
+}
