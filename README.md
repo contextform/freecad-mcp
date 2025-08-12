@@ -24,6 +24,10 @@ npm install -g freecad-mcp-setup
 freecad-mcp setup
 ```
 
+**Windows users:** If you get "command not recognized", try:
+- Restart your command prompt, OR
+- Use: `npx freecad-mcp-setup setup`
+
 **That's it!** The installer automatically:
 - ✅ **Cross-platform**: Works on macOS, Linux, and Windows
 - ✅ Detects your OS and FreeCAD installation

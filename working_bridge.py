@@ -9,6 +9,7 @@ import json
 import os
 import sys
 import socket
+import platform
 from typing import Any
 
 # Add current directory to path
@@ -28,19 +29,26 @@ async def main():
     # Create server with freecad naming
     server = Server("freecad")
     
-    # Check if FreeCAD is available
-    socket_path = "/tmp/freecad_mcp.sock"
-    freecad_available = os.path.exists(socket_path)
+    # Check if FreeCAD is available (cross-platform)
+    if platform.system() == "Windows":
+        socket_path = "localhost:23456"
+        freecad_available = True  # We'll check connection when needed
+    else:
+        socket_path = "/tmp/freecad_mcp.sock"
+        freecad_available = os.path.exists(socket_path)
     
     async def send_to_freecad(tool_name: str, args: dict) -> str:
-        """Send command to FreeCAD via Unix socket with selection workflow support"""
+        """Send command to FreeCAD via socket (cross-platform)"""
         try:
-            if not os.path.exists(socket_path):
-                return json.dumps({"error": "FreeCAD socket not available. Please start FreeCAD and switch to AI Copilot workbench"})
-            
-            # Create socket connection
-            sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-            sock.connect(socket_path)
+            # Create socket connection based on platform
+            if platform.system() == "Windows":
+                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                sock.connect(('localhost', 23456))
+            else:
+                if not os.path.exists(socket_path):
+                    return json.dumps({"error": "FreeCAD socket not available. Please start FreeCAD and switch to AI Copilot workbench"})
+                sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+                sock.connect(socket_path)
             
             # Send command
             command = json.dumps({"tool": tool_name, "args": args})
@@ -119,7 +127,7 @@ async def main():
         ]
         
         # Add Phase 1 Smart Dispatchers if socket is available
-        if os.path.exists(socket_path):
+        if freecad_available:
             smart_dispatchers = [
                 types.Tool(
                     name="partdesign_operations", 
@@ -301,9 +309,9 @@ async def main():
         
         if name == "check_freecad_connection":
             status = {
-                "freecad_socket_exists": os.path.exists(socket_path),
+                "freecad_socket_exists": freecad_available,
                 "socket_path": socket_path,
-                "status": "FreeCAD running with AI Copilot workbench" if os.path.exists(socket_path) 
+                "status": "FreeCAD running with AI Copilot workbench" if freecad_available 
                          else "FreeCAD not running. Please start FreeCAD and switch to AI Copilot workbench"
             }
             return [types.TextContent(

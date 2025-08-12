@@ -205,16 +205,27 @@ class FreeCADSocketServer:
             FreeCAD.Console.PrintMessage("Socket server initialized with Universal Selector (agent import failed)\n")
             
     def start_server(self):
-        """Start the Unix socket server"""
+        """Start the socket server (cross-platform)"""
         try:
-            # Remove existing socket file
-            if os.path.exists(self.socket_path):
-                os.remove(self.socket_path)
-                
-            # Create Unix domain socket
-            self.server_socket = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-            self.server_socket.bind(self.socket_path)
-            self.server_socket.listen(5)
+            import platform
+            
+            if platform.system() == "Windows":
+                # Use TCP socket on Windows (AF_UNIX not supported)
+                self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                self.server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                self.server_socket.bind(('localhost', 23456))  # Use fixed port
+                self.server_socket.listen(5)
+                self.socket_path = "localhost:23456"  # Update for bridge reference
+                FreeCAD.Console.PrintMessage("Using TCP socket on Windows (localhost:23456)\n")
+            else:
+                # Use Unix domain socket on macOS/Linux
+                if os.path.exists(self.socket_path):
+                    os.remove(self.socket_path)
+                    
+                self.server_socket = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+                self.server_socket.bind(self.socket_path)
+                self.server_socket.listen(5)
+                FreeCAD.Console.PrintMessage(f"Using Unix socket: {self.socket_path}\n")
             
             self.is_running = True
             
