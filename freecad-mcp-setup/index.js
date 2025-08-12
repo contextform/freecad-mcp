@@ -205,9 +205,15 @@ async function downloadAndInstall(release) {
     // Download and extract repository
     await downloadAndExtractRepo(tempDir);
     
+    // List contents for debugging
+    logStep('📋', `Temp directory contents: ${fs.readdirSync(tempDir).join(', ')}`);
+    
     // Find the AICopilot directory in extracted files
     const extractedDir = findAICopilotDir(tempDir);
     if (!extractedDir) {
+      logError('AICopilot workbench not found in downloaded files');
+      logError('This might be a ZIP extraction issue on Windows');
+      logError('Please try the manual installation method from the README');
       throw new Error('AICopilot workbench not found in downloaded files');
     }
     
@@ -258,42 +264,65 @@ async function downloadAndExtractRepo(tempDir) {
   });
 }
 
-// Extract ZIP file (cross-platform implementation)
+// Extract ZIP file using pure Node.js (no PowerShell/unzip dependencies)
 async function extractZip(zipPath, extractDir) {
-  const { execSync } = require('child_process');
-  const platform = os.platform();
-  
   try {
-    if (platform === 'win32') {
-      // Use PowerShell on Windows
-      const psCommand = `Expand-Archive -Path "${zipPath}" -DestinationPath "${extractDir}" -Force`;
-      execSync(`powershell -Command "${psCommand}"`, { stdio: 'ignore' });
-    } else {
-      // Use unzip on macOS/Linux
-      execSync(`unzip -q "${zipPath}" -d "${extractDir}"`, { stdio: 'ignore' });
+    logStep('📦', `Extracting ZIP file: ${zipPath}`);
+    logStep('📋', `ZIP file size: ${fs.statSync(zipPath).size} bytes`);
+    
+    const AdmZip = require('adm-zip');
+    const zip = new AdmZip(zipPath);
+    
+    // List ZIP contents for debugging
+    const zipEntries = zip.getEntries();
+    logStep('📂', `ZIP contains ${zipEntries.length} entries`);
+    
+    if (zipEntries.length > 0) {
+      logStep('📝', `First few entries: ${zipEntries.slice(0, 3).map(e => e.entryName).join(', ')}`);
     }
+    
+    zip.extractAllTo(extractDir, true);
+    
+    // Verify extraction
+    const extractedItems = fs.readdirSync(extractDir);
+    logStep('✅', `Extracted ${extractedItems.length} items to: ${extractDir}`);
+    
     fs.unlinkSync(zipPath); // Clean up zip file
+    logSuccess('ZIP extraction completed');
   } catch (error) {
+    logError(`ZIP extraction error: ${error.message}`);
+    logError(`ZIP path: ${zipPath}`);
+    logError(`Extract dir: ${extractDir}`);
     throw new Error(`Failed to extract archive: ${error.message}`);
   }
 }
 
 // Find AICopilot directory in extracted files
 function findAICopilotDir(tempDir) {
-  function searchRecursively(dir) {
-    const items = fs.readdirSync(dir);
-    
-    for (const item of items) {
-      const itemPath = path.join(dir, item);
+  function searchRecursively(dir, depth = 0) {
+    try {
+      const items = fs.readdirSync(dir);
+      logStep('🔍', `Searching in: ${dir} (${items.length} items, depth: ${depth})`);
       
-      if (fs.statSync(itemPath).isDirectory()) {
-        if (item === 'AICopilot') {
-          return itemPath;
-        }
+      for (const item of items) {
+        const itemPath = path.join(dir, item);
         
-        const found = searchRecursively(itemPath);
-        if (found) return found;
+        if (fs.statSync(itemPath).isDirectory()) {
+          logStep('📁', `Found directory: ${item}`);
+          if (item === 'AICopilot') {
+            logStep('✅', `Found AICopilot at: ${itemPath}`);
+            return itemPath;
+          }
+          
+          // Only search 2 levels deep to avoid infinite loops
+          if (depth < 2) {
+            const found = searchRecursively(itemPath, depth + 1);
+            if (found) return found;
+          }
+        }
       }
+    } catch (error) {
+      logError(`Error searching directory ${dir}: ${error.message}`);
     }
     
     return null;
@@ -407,14 +436,14 @@ async function install() {
   try {
     log('🚀 FreeCAD MCP Setup\n', 'blue');
     
-    // Check FreeCAD installation
+    // Check FreeCAD installation (non-blocking)
     logStep('1️⃣', 'Checking FreeCAD installation...');
     if (!checkFreeCadInstallation()) {
-      logError('FreeCAD not found. Please install FreeCAD 1.0+ first:');
-      log('https://freecad.org/downloads.php', 'blue');
-      process.exit(1);
+      logWarning('FreeCAD not detected, but continuing installation...');
+      logWarning('Make sure FreeCAD 1.0+ is installed: https://freecad.org/downloads.php');
+    } else {
+      logSuccess('FreeCAD found');
     }
-    logSuccess('FreeCAD found');
     
     // Check for updates
     const { shouldUpdate, release } = await checkForUpdates();
