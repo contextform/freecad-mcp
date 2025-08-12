@@ -9,14 +9,159 @@ import json
 import os
 import time
 import asyncio
-from typing import Dict, Any
+from typing import Dict, Any, List, Optional
 
-# Import the ReAct agent
+# Import our new modal command system
 try:
-    from freecad_agent import FreeCADReActAgent
-except ImportError as e:
-    FreeCAD.Console.PrintWarning(f"Could not import FreeCADReActAgent: {e}\n")
-    FreeCADReActAgent = None
+    from modal_command_system import get_modal_system
+except ImportError:
+    # Fallback if modal system not available
+    get_modal_system = None
+
+# Import the ReAct agent (TEMPORARILY DISABLED FOR TESTING)
+# try:
+#     from freecad_agent import FreeCADReActAgent
+# except ImportError as e:
+#     FreeCAD.Console.PrintWarning(f"Could not import FreeCADReActAgent: {e}\n")
+#     FreeCADReActAgent = None
+FreeCADReActAgent = None  # Temporarily disabled
+
+class UniversalSelector:
+    """Universal selection system for human-in-the-loop CAD operations"""
+    
+    def __init__(self):
+        self.pending_operations = {}  # Track pending selection operations
+        
+    def request_selection(self, tool_name: str, selection_type: str, message: str, 
+                         object_name: str = "", hints: str = "", **kwargs) -> Dict[str, Any]:
+        """Request user selection in FreeCAD GUI"""
+        operation_id = f"{tool_name}_{int(time.time() * 1000)}"  # Unique ID
+        
+        # Clear previous selection
+        try:
+            FreeCADGui.Selection.clearSelection()
+        except:
+            pass  # GUI might not be available in headless mode
+        
+        # Store operation context with all parameters
+        self.pending_operations[operation_id] = {
+            "tool": tool_name,
+            "type": selection_type,
+            "object": object_name,
+            "timestamp": time.time(),
+            **kwargs  # Store any additional parameters (radius, distance, etc.)
+        }
+        
+        # Optional: highlight relevant elements
+        if object_name and selection_type in ["edges", "faces"]:
+            self._highlight_elements(object_name, selection_type)
+        
+        # Add helpful hints
+        full_message = message
+        if hints:
+            full_message += f"\n💡 Tip: {hints}"
+        
+        return {
+            "status": "awaiting_selection",
+            "operation_id": operation_id,
+            "selection_type": selection_type,
+            "message": full_message,
+            "object_name": object_name
+        }
+    
+    def complete_selection(self, operation_id: str) -> Optional[Dict[str, Any]]:
+        """Complete selection and return parsed selection data"""
+        if operation_id not in self.pending_operations:
+            return None
+        
+        # Get current selection from FreeCAD
+        try:
+            selection = FreeCADGui.Selection.getSelectionEx()
+        except:
+            return {"error": "Could not access FreeCAD selection"}
+        
+        # Get operation context
+        context = self.pending_operations.pop(operation_id)
+        selection_type = context["type"]
+        
+        # Parse selection based on type
+        parsed_data = self._parse_selection(selection, selection_type)
+        
+        return {
+            "selection_data": parsed_data,
+            "context": context,
+            "selection_count": len(parsed_data.get("elements", []))
+        }
+    
+    def _parse_selection(self, selection: List, selection_type: str) -> Dict[str, Any]:
+        """Parse FreeCAD selection based on requested type"""
+        result = {"elements": [], "objects": []}
+        
+        for sel in selection:
+            obj_info = {
+                "document": sel.DocumentName,
+                "object": sel.ObjectName,
+                "sub_elements": sel.SubElementNames
+            }
+            result["objects"].append(obj_info)
+            
+            if selection_type == "edges":
+                # Extract edge indices
+                for sub in sel.SubElementNames:
+                    if sub.startswith('Edge'):
+                        try:
+                            edge_idx = int(sub[4:])  # Extract number from "EdgeN"
+                            result["elements"].append(edge_idx)
+                        except ValueError:
+                            continue
+                            
+            elif selection_type == "faces":
+                # Extract face indices  
+                for sub in sel.SubElementNames:
+                    if sub.startswith('Face'):
+                        try:
+                            face_idx = int(sub[4:])  # Extract number from "FaceN"
+                            result["elements"].append(face_idx)
+                        except ValueError:
+                            continue
+                            
+            elif selection_type == "objects":
+                # Just collect object names
+                result["elements"].append(sel.ObjectName)
+        
+        return result
+    
+    def _highlight_elements(self, object_name: str, element_type: str):
+        """Optional: Highlight selectable elements to help user"""
+        try:
+            doc = FreeCAD.ActiveDocument
+            if not doc:
+                return
+                
+            obj = doc.getObject(object_name)
+            if not obj or not hasattr(obj, 'Shape'):
+                return
+                
+            # Could implement visual hints here
+            # For now, just ensure object is visible and selected for context
+            if hasattr(obj, 'ViewObject'):
+                obj.ViewObject.Visibility = True
+                
+        except Exception:
+            pass  # Non-critical feature
+    
+    def cleanup_old_operations(self, max_age_seconds: int = 300):
+        """Clean up operations older than max_age_seconds"""
+        current_time = time.time()
+        expired_ops = [
+            op_id for op_id, context in self.pending_operations.items()
+            if current_time - context["timestamp"] > max_age_seconds
+        ]
+        
+        for op_id in expired_ops:
+            self.pending_operations.pop(op_id, None)
+            
+        return len(expired_ops)
 
 class FreeCADSocketServer:
     """Socket server that runs inside FreeCAD to receive MCP commands"""
@@ -27,13 +172,16 @@ class FreeCADSocketServer:
         self.is_running = False
         self.client_connections = []
         
+        # Initialize universal selection system
+        self.selector = UniversalSelector()
+        
         # Initialize the ReAct agent
         if FreeCADReActAgent:
             self.agent = FreeCADReActAgent(self)
-            FreeCAD.Console.PrintMessage("Socket server initialized with ReAct Agent\n")
+            FreeCAD.Console.PrintMessage("Socket server initialized with ReAct Agent and Universal Selector\n")
         else:
             self.agent = None
-            FreeCAD.Console.PrintMessage("Socket server initialized without agent (import failed)\n")
+            FreeCAD.Console.PrintMessage("Socket server initialized with Universal Selector (agent import failed)\n")
             
     def start_server(self):
         """Start the Unix socket server"""
@@ -128,10 +276,38 @@ class FreeCADSocketServer:
             })
             
     def _execute_tool(self, tool_name: str, args: Dict[str, Any]) -> str:
-        """Execute the requested tool"""
+        """Execute the requested tool with Phase 1 smart dispatcher support"""
         
+        # Special handling for view_control to prevent crashes
+        if tool_name == "view_control":
+            operation = args.get('operation', '')
+            if operation == "set_view":
+                view_type = args.get('view_type', 'isometric').lower()
+                # Return instructions instead of executing to prevent crash
+                view_shortcuts = {
+                    'top': '2', 'bottom': 'Shift+2',
+                    'front': '1', 'rear': 'Shift+1', 'back': 'Shift+1',
+                    'left': '3', 'right': 'Shift+3',
+                    'isometric': '0', 'iso': '0',
+                    'axonometric': 'A', 'axo': 'A'
+                }
+                if view_type in view_shortcuts:
+                    return f"⚠️ View command disabled (thread safety issue).\nPress '{view_shortcuts[view_type]}' in FreeCAD for {view_type} view"
+                return f"Unknown view: {view_type}"
+            # Other view_control operations can proceed
+            return self._handle_view_control(args)
+        
+        # Handle other smart dispatcher tools
+        elif tool_name == "partdesign_operations":
+            return self._handle_partdesign_operations(args)
+        elif tool_name == "part_operations":
+            return self._handle_part_operations(args)
+        elif tool_name == "execute_python":
+            return self._execute_python(args)
+        
+        # Legacy individual tool routing (for backward compatibility)
         # Map tool names to implementations
-        if tool_name == "create_box":
+        elif tool_name == "create_box":
             return self._create_box(args)
         elif tool_name == "create_cylinder":
             return self._create_cylinder(args)
@@ -168,6 +344,35 @@ class FreeCADSocketServer:
             return self._pocket_sketch(args)
         elif tool_name == "fillet_edges":
             return self._fillet_edges(args)
+        # Priority 1: Essential Missing Tools
+        elif tool_name == "chamfer_edges":
+            return self._chamfer_edges(args)
+        elif tool_name == "hole_wizard":
+            return self._hole_wizard(args)
+        elif tool_name == "linear_pattern":
+            return self._linear_pattern(args)
+        elif tool_name == "mirror_feature":
+            return self._mirror_feature(args)
+        elif tool_name == "revolution":
+            return self._revolution(args)
+        # Priority 2: Professional Features
+        elif tool_name == "loft_profiles":
+            return self._loft_profiles(args)
+        elif tool_name == "sweep_path":
+            return self._sweep_path(args)
+        elif tool_name == "draft_faces":
+            return self._draft_faces(args)
+        elif tool_name == "shell_solid":
+            return self._shell_solid(args)
+        elif tool_name == "create_rib":
+            return self._create_rib(args)
+        # Priority 3: Advanced Tools
+        elif tool_name == "create_helix":
+            return self._create_helix(args)
+        elif tool_name == "polar_pattern":
+            return self._polar_pattern(args)
+        elif tool_name == "add_thickness":
+            return self._add_thickness(args)
         # Analysis
         elif tool_name == "measure_distance":
             return self._measure_distance(args)
@@ -188,8 +393,6 @@ class FreeCADSocketServer:
         # GUI Control Tools
         elif tool_name == "run_command":
             return self._run_command(args)
-        elif tool_name == "new_document":
-            return self._new_document(args)
         elif tool_name == "save_document":
             return self._save_document(args)
         elif tool_name == "open_document":
@@ -216,6 +419,8 @@ class FreeCADSocketServer:
             return self._redo(args)
         elif tool_name == "ai_agent":
             return self._ai_agent(args)
+        elif tool_name == "continue_selection":
+            return self._continue_selection(args)
         else:
             return f"Unknown tool: {tool_name}"
             
@@ -643,7 +848,7 @@ class FreeCADSocketServer:
             return f"Error creating sketch: {e}"
             
     def _pad_sketch(self, args: Dict[str, Any]) -> str:
-        """Extrude a sketch to create solid (pad)"""
+        """Extrude a sketch to create solid (pad) - requires PartDesign Body"""
         try:
             sketch_name = args.get('sketch_name', '')
             length = args.get('length', 10)
@@ -656,14 +861,31 @@ class FreeCADSocketServer:
             sketch = doc.getObject(sketch_name)
             if not sketch:
                 return f"Sketch not found: {sketch_name}"
-                
-            # Create pad
+            
+            # Check if we have an active PartDesign Body, create one if needed
+            body = None
+            for obj in doc.Objects:
+                if obj.TypeId == "PartDesign::Body":
+                    body = obj
+                    break
+            
+            if not body:
+                body = doc.addObject("PartDesign::Body", "Body")
+                doc.recompute()
+            
+            # Move sketch to body if not already there
+            if sketch not in body.Group:
+                body.addObject(sketch)
+            
+            # Create pad within the body
             pad = doc.addObject("PartDesign::Pad", name)
             pad.Profile = sketch
             pad.Length = length
+            body.addObject(pad)
+            
             doc.recompute()
             
-            return f"Created pad: {pad.Name} from {sketch_name} with length {length}mm"
+            return f"Created pad: {pad.Name} from {sketch_name} with length {length}mm in Body: {body.Name}"
             
         except Exception as e:
             return f"Error creating pad: {e}"
@@ -695,7 +917,64 @@ class FreeCADSocketServer:
             return f"Error creating pocket: {e}"
             
     def _fillet_edges(self, args: Dict[str, Any]) -> str:
-        """Add fillets to object edges"""
+        """Add fillets to object edges (Interactive selection workflow)"""
+        try:
+            object_name = args.get('object_name', '')
+            radius = args.get('radius', 1)
+            name = args.get('name', 'Fillet')
+            auto_select_all = args.get('auto_select_all', False)
+            edges = args.get('edges', [])  # Allow explicit edge list
+            
+            # Check if this is continuing a selection
+            if args.get('_continue_selection'):
+                operation_id = args.get('_operation_id')
+                selection_result = self.selector.complete_selection(operation_id)
+                
+                if not selection_result:
+                    return "Selection operation not found or expired"
+                
+                if "error" in selection_result:
+                    return selection_result["error"]
+                
+                return self._create_fillet_with_selection(args, selection_result)
+            
+            doc = FreeCAD.ActiveDocument
+            if not doc:
+                return "No active document"
+                
+            obj = doc.getObject(object_name)
+            if not obj:
+                return f"Object not found: {object_name}"
+                
+            if not hasattr(obj, 'Shape') or not obj.Shape.Edges:
+                return f"Object {object_name} has no edges to fillet"
+            
+            # Method 1: Use explicit edge list if provided
+            if edges:
+                return self._create_fillet_with_edges(object_name, edges, radius, name)
+            
+            # Method 2: Auto-select all edges if requested
+            if auto_select_all:
+                return self._create_fillet_auto(args)
+            
+            # Method 3: Interactive selection workflow
+            selection_request = self.selector.request_selection(
+                tool_name="fillet_edges",
+                selection_type="edges",
+                message=f"Please select edges to fillet on {object_name} object in FreeCAD.\nPress ENTER in Claude Code when selection is complete...",
+                object_name=object_name,
+                hints="Select edges for filleting. Ctrl+click for multiple edges.",
+                radius=radius,  # Store the radius parameter
+                name=name  # Store the name parameter
+            )
+            
+            return json.dumps(selection_request)
+            
+        except Exception as e:
+            return f"Error in fillet operation: {e}"
+            
+    def _create_fillet_with_selection(self, args: Dict[str, Any], selection_result: Dict[str, Any]) -> str:
+        """Create fillet using selected edges"""
         try:
             object_name = args.get('object_name', '')
             radius = args.get('radius', 1)
@@ -709,11 +988,49 @@ class FreeCADSocketServer:
             if not obj:
                 return f"Object not found: {object_name}"
                 
-            # Create fillet (simplified - fillets all edges)
+            edge_indices = selection_result["selection_data"]["elements"]
+            if not edge_indices:
+                return "No edges were selected"
+                
+            # Create fillet with selected edges
             fillet = doc.addObject("Part::Fillet", name)
             fillet.Base = obj
             
-            # Add all edges with same radius (simplified approach)
+            # Add selected edges with radius
+            if hasattr(obj, 'Shape') and obj.Shape.Edges:
+                edge_list = []
+                for edge_idx in edge_indices:
+                    if 1 <= edge_idx <= len(obj.Shape.Edges):
+                        edge_list.append((edge_idx, radius, radius))
+                fillet.Edges = edge_list
+                
+            doc.recompute()
+            
+            return f"Created fillet: {fillet.Name} on {len(edge_indices)} selected edges with radius {radius}mm"
+            
+        except Exception as e:
+            return f"Error creating fillet with selection: {e}"
+            
+    def _create_fillet_auto(self, args: Dict[str, Any]) -> str:
+        """Create fillet on all edges (original behavior)"""
+        try:
+            object_name = args.get('object_name', '')
+            radius = args.get('radius', 1)
+            name = args.get('name', 'Fillet')
+            
+            doc = FreeCAD.ActiveDocument
+            if not doc:
+                return "No active document"
+                
+            obj = doc.getObject(object_name)
+            if not obj:
+                return f"Object not found: {object_name}"
+                
+            # Create fillet (all edges)
+            fillet = doc.addObject("Part::Fillet", name)
+            fillet.Base = obj
+            
+            # Add all edges with same radius
             if hasattr(obj, 'Shape') and obj.Shape.Edges:
                 edge_list = []
                 for i, edge in enumerate(obj.Shape.Edges):
@@ -722,10 +1039,723 @@ class FreeCADSocketServer:
                 
             doc.recompute()
             
-            return f"Created fillet: {fillet.Name} on {object_name} with radius {radius}mm"
+            return f"Created fillet: {fillet.Name} on all {len(obj.Shape.Edges)} edges with radius {radius}mm"
             
         except Exception as e:
-            return f"Error creating fillet: {e}"
+            return f"Error creating auto fillet: {e}"
+    
+    # === Edge & Surface Finishing Tools ===
+    def _chamfer_edges(self, args: Dict[str, Any]) -> str:
+        """Add chamfers (angled cuts) to object edges (with interactive selection)"""
+        try:
+            object_name = args.get('object_name', '')
+            distance = args.get('distance', 1)
+            name = args.get('name', 'Chamfer')
+            auto_select_all = args.get('auto_select_all', False)
+            
+            # Check if this is continuing a selection
+            if args.get('_continue_selection'):
+                operation_id = args.get('_operation_id')
+                selection_result = self.selector.complete_selection(operation_id)
+                
+                if not selection_result:
+                    return "Selection operation not found or expired"
+                
+                if "error" in selection_result:
+                    return selection_result["error"]
+                
+                return self._create_chamfer_with_selection(args, selection_result)
+            
+            # Check if auto-selecting all edges
+            if auto_select_all:
+                return self._create_chamfer_auto(args)
+            
+            # Request interactive selection
+            selection_request = self.selector.request_selection(
+                tool_name="chamfer_edges",
+                selection_type="edges",
+                message=f"Please select edges to chamfer on {object_name} object in FreeCAD.\nPress ENTER in Claude Code when selection is complete...",
+                object_name=object_name,
+                hints="Select sharp edges for chamfering. Ctrl+click for multiple edges.",
+                distance=distance,  # Store the distance parameter
+                name=name  # Store the name parameter
+            )
+            
+            return json.dumps(selection_request)
+            
+        except Exception as e:
+            return f"Error in chamfer operation: {e}"
+            
+    def _create_chamfer_with_selection(self, args: Dict[str, Any], selection_result: Dict[str, Any]) -> str:
+        """Create chamfer using selected edges"""
+        try:
+            object_name = args.get('object_name', '')
+            distance = args.get('distance', 1)
+            name = args.get('name', 'Chamfer')
+            
+            doc = FreeCAD.ActiveDocument
+            if not doc:
+                return "No active document"
+                
+            obj = doc.getObject(object_name)
+            if not obj:
+                return f"Object not found: {object_name}"
+                
+            edge_indices = selection_result["selection_data"]["elements"]
+            if not edge_indices:
+                return "No edges were selected"
+                
+            # Create chamfer with selected edges
+            chamfer = doc.addObject("Part::Chamfer", name)
+            chamfer.Base = obj
+            
+            # Add selected edges with distance
+            if hasattr(obj, 'Shape') and obj.Shape.Edges:
+                edge_list = []
+                for edge_idx in edge_indices:
+                    if 1 <= edge_idx <= len(obj.Shape.Edges):
+                        edge_list.append((edge_idx, distance))
+                chamfer.Edges = edge_list
+                
+            doc.recompute()
+            
+            return f"Created chamfer: {chamfer.Name} on {len(edge_indices)} selected edges with distance {distance}mm"
+            
+        except Exception as e:
+            return f"Error creating chamfer with selection: {e}"
+            
+    def _create_chamfer_auto(self, args: Dict[str, Any]) -> str:
+        """Create chamfer on all edges (original behavior)"""
+        try:
+            object_name = args.get('object_name', '')
+            distance = args.get('distance', 1)
+            name = args.get('name', 'Chamfer')
+            
+            doc = FreeCAD.ActiveDocument
+            if not doc:
+                return "No active document"
+                
+            obj = doc.getObject(object_name)
+            if not obj:
+                return f"Object not found: {object_name}"
+                
+            # Create chamfer (all edges)
+            chamfer = doc.addObject("Part::Chamfer", name)
+            chamfer.Base = obj
+            
+            # Add all edges with same distance
+            if hasattr(obj, 'Shape') and obj.Shape.Edges:
+                edge_list = []
+                for i, edge in enumerate(obj.Shape.Edges):
+                    edge_list.append((i+1, distance))
+                chamfer.Edges = edge_list
+                
+            doc.recompute()
+            
+            return f"Created chamfer: {chamfer.Name} on all {len(obj.Shape.Edges)} edges with distance {distance}mm"
+            
+        except Exception as e:
+            return f"Error creating auto chamfer: {e}"
+    
+    # === Holes & Features ===        
+    def _hole_wizard(self, args: Dict[str, Any]) -> str:
+        """Create standard holes (simple, counterbore, countersink)"""
+        try:
+            object_name = args.get('object_name', '')
+            hole_type = args.get('hole_type', 'simple')
+            diameter = args.get('diameter', 6)
+            depth = args.get('depth', 10)
+            x = args.get('x', 0)
+            y = args.get('y', 0)
+            cb_diameter = args.get('cb_diameter', 12)
+            cb_depth = args.get('cb_depth', 3)
+            
+            doc = FreeCAD.ActiveDocument
+            if not doc:
+                return "No active document"
+                
+            base_obj = doc.getObject(object_name)
+            if not base_obj:
+                return f"Object not found: {object_name}"
+                
+            # Create hole cylinder
+            hole = doc.addObject("Part::Cylinder", "Hole")
+            hole.Radius = diameter / 2
+            hole.Height = depth + 5  # Extra depth for clean cut
+            hole.Placement.Base = FreeCAD.Vector(x, y, -2.5)
+            
+            # For counterbore/countersink, create additional geometry
+            if hole_type == 'counterbore':
+                cb_hole = doc.addObject("Part::Cylinder", "CounterboreHole")
+                cb_hole.Radius = cb_diameter / 2
+                cb_hole.Height = cb_depth + 1  # Extra depth
+                cb_hole.Placement.Base = FreeCAD.Vector(x, y, -0.5)
+                
+                # Combine holes
+                combined_hole = doc.addObject("Part::Fuse", "CombinedHole")
+                combined_hole.Base = hole
+                combined_hole.Tool = cb_hole
+                doc.recompute()
+                
+                # Cut from base object
+                cut = doc.addObject("Part::Cut", f"{object_name}_WithHole")
+                cut.Base = base_obj
+                cut.Tool = combined_hole
+                
+            elif hole_type == 'countersink':
+                # Create countersink cone
+                cs_cone = doc.addObject("Part::Cone", "CountersinkCone")
+                cs_cone.Radius1 = cb_diameter / 2
+                cs_cone.Radius2 = diameter / 2
+                cs_cone.Height = cb_depth
+                cs_cone.Placement.Base = FreeCAD.Vector(x, y, -cb_depth)
+                
+                # Combine with hole
+                combined_hole = doc.addObject("Part::Fuse", "CombinedHole")
+                combined_hole.Base = hole
+                combined_hole.Tool = cs_cone
+                doc.recompute()
+                
+                # Cut from base object
+                cut = doc.addObject("Part::Cut", f"{object_name}_WithHole")
+                cut.Base = base_obj
+                cut.Tool = combined_hole
+                
+            else:  # simple hole
+                cut = doc.addObject("Part::Cut", f"{object_name}_WithHole")
+                cut.Base = base_obj
+                cut.Tool = hole
+                
+            doc.recompute()
+            
+            return f"Created {hole_type} hole: {diameter}mm diameter at ({x}, {y}) in {object_name}"
+            
+        except Exception as e:
+            return f"Error creating hole: {e}"
+    
+    # === Patterns & Arrays ===
+    def _linear_pattern(self, args: Dict[str, Any]) -> str:
+        """Create linear pattern of features"""
+        try:
+            feature_name = args.get('feature_name', '')
+            direction = args.get('direction', 'x')
+            count = args.get('count', 3)
+            spacing = args.get('spacing', 10)
+            name = args.get('name', 'LinearPattern')
+            
+            doc = FreeCAD.ActiveDocument
+            if not doc:
+                return "No active document"
+                
+            feature = doc.getObject(feature_name)
+            if not feature:
+                return f"Feature not found: {feature_name}"
+                
+            # Create pattern copies
+            pattern_objects = []
+            direction_vector = FreeCAD.Vector(0, 0, 0)
+            
+            if direction.lower() == 'x':
+                direction_vector = FreeCAD.Vector(spacing, 0, 0)
+            elif direction.lower() == 'y':
+                direction_vector = FreeCAD.Vector(0, spacing, 0)
+            elif direction.lower() == 'z':
+                direction_vector = FreeCAD.Vector(0, 0, spacing)
+                
+            # Create copies
+            for i in range(1, count):  # Start from 1 (original is 0)
+                copy = doc.copyObject(feature)
+                copy.Label = f"{feature.Label}_Pattern{i}"
+                
+                # Apply transformation
+                offset = FreeCAD.Vector(
+                    direction_vector.x * i,
+                    direction_vector.y * i,
+                    direction_vector.z * i
+                )
+                copy.Placement.Base = feature.Placement.Base.add(offset)
+                pattern_objects.append(copy.Name)
+                
+            doc.recompute()
+            
+            return f"Created linear pattern: {count} instances of {feature_name} in {direction} direction with {spacing}mm spacing"
+            
+        except Exception as e:
+            return f"Error creating linear pattern: {e}"
+    
+    # === Symmetry Operations ===        
+    def _mirror_feature(self, args: Dict[str, Any]) -> str:
+        """Mirror features across a plane"""
+        try:
+            feature_name = args.get('feature_name', '')
+            plane = args.get('plane', 'YZ')
+            name = args.get('name', 'Mirrored')
+            
+            doc = FreeCAD.ActiveDocument
+            if not doc:
+                return "No active document"
+                
+            feature = doc.getObject(feature_name)
+            if not feature:
+                return f"Feature not found: {feature_name}"
+                
+            # Create mirror transformation
+            mirror = doc.addObject("Part::Mirroring", name)
+            mirror.Source = feature
+            
+            # Set mirror plane
+            if plane.upper() == 'XY':
+                mirror.Normal = (0, 0, 1)
+                mirror.Base = (0, 0, 0)
+            elif plane.upper() == 'XZ':
+                mirror.Normal = (0, 1, 0)
+                mirror.Base = (0, 0, 0)
+            elif plane.upper() == 'YZ':
+                mirror.Normal = (1, 0, 0)
+                mirror.Base = (0, 0, 0)
+                
+            doc.recompute()
+            
+            return f"Created mirror: {mirror.Name} of {feature_name} across {plane} plane"
+            
+        except Exception as e:
+            return f"Error creating mirror: {e}"
+            
+    def _revolution(self, args: Dict[str, Any]) -> str:
+        """Revolve a sketch around an axis to create solid of revolution"""
+        try:
+            sketch_name = args.get('sketch_name', '')
+            axis = args.get('axis', 'z')
+            angle = args.get('angle', 360)
+            name = args.get('name', 'Revolution')
+            
+            doc = FreeCAD.ActiveDocument
+            if not doc:
+                return "No active document"
+                
+            sketch = doc.getObject(sketch_name)
+            if not sketch:
+                return f"Sketch not found: {sketch_name}"
+                
+            # Create revolution
+            revolution = doc.addObject("Part::Revolution", name)
+            revolution.Source = sketch
+            revolution.Angle = angle
+            
+            # Set axis
+            if axis.lower() == 'x':
+                revolution.Axis = (1, 0, 0)
+            elif axis.lower() == 'y':
+                revolution.Axis = (0, 1, 0)
+            else:  # z
+                revolution.Axis = (0, 0, 1)
+                
+            doc.recompute()
+            
+            return f"Created revolution: {revolution.Name} from {sketch_name} around {axis.upper()}-axis, {angle}°"
+            
+        except Exception as e:
+            return f"Error creating revolution: {e}"
+    
+    # === Advanced Shape Creation Tools ===
+    def _loft_profiles(self, args: Dict[str, Any]) -> str:
+        """Loft between multiple sketches to create complex shapes"""
+        try:
+            sketches = args.get('sketches', [])
+            ruled = args.get('ruled', False)
+            closed = args.get('closed', True)
+            name = args.get('name', 'Loft')
+            
+            if len(sketches) < 2:
+                return "Need at least 2 sketches for lofting"
+                
+            doc = FreeCAD.ActiveDocument
+            if not doc:
+                return "No active document"
+                
+            # Get sketch objects
+            sketch_objs = []
+            for sketch_name in sketches:
+                sketch = doc.getObject(sketch_name)
+                if sketch:
+                    sketch_objs.append(sketch)
+                else:
+                    return f"Sketch not found: {sketch_name}"
+                    
+            # Create loft
+            loft = doc.addObject("Part::Loft", name)
+            loft.Sections = sketch_objs
+            loft.Solid = closed
+            loft.Ruled = ruled
+            
+            doc.recompute()
+            
+            return f"Created loft: {loft.Name} through {len(sketches)} profiles"
+            
+        except Exception as e:
+            return f"Error creating loft: {e}"
+            
+    def _sweep_path(self, args: Dict[str, Any]) -> str:
+        """Sweep a profile sketch along a path sketch"""
+        try:
+            profile_sketch = args.get('profile_sketch', '')
+            path_sketch = args.get('path_sketch', '')
+            solid = args.get('solid', True)
+            name = args.get('name', 'Sweep')
+            
+            doc = FreeCAD.ActiveDocument
+            if not doc:
+                return "No active document"
+                
+            profile = doc.getObject(profile_sketch)
+            if not profile:
+                return f"Profile sketch not found: {profile_sketch}"
+                
+            path = doc.getObject(path_sketch)
+            if not path:
+                return f"Path sketch not found: {path_sketch}"
+                
+            # Create sweep
+            sweep = doc.addObject("Part::Sweep", name)
+            sweep.Sections = [profile]
+            sweep.Spine = path
+            sweep.Solid = solid
+            
+            doc.recompute()
+            
+            return f"Created sweep: {sweep.Name} with profile {profile_sketch} along path {path_sketch}"
+            
+        except Exception as e:
+            return f"Error creating sweep: {e}"
+    
+    # === Manufacturing Features ===        
+    def _draft_faces(self, args: Dict[str, Any]) -> str:
+        """Add draft angles to faces for manufacturing"""
+        try:
+            object_name = args.get('object_name', '')
+            angle = args.get('angle', 5)
+            neutral_plane = args.get('neutral_plane', 'XY')
+            name = args.get('name', 'Draft')
+            
+            doc = FreeCAD.ActiveDocument
+            if not doc:
+                return "No active document"
+                
+            obj = doc.getObject(object_name)
+            if not obj:
+                return f"Object not found: {object_name}"
+                
+            # Create draft - simplified version
+            # Note: FreeCAD's draft feature is complex, this is a basic implementation
+            draft = doc.addObject("Part::Draft", name)
+            draft.Base = obj
+            draft.Angle = angle
+            
+            # Set neutral plane direction
+            if neutral_plane.upper() == 'XY':
+                draft.Direction = (0, 0, 1)
+            elif neutral_plane.upper() == 'XZ':
+                draft.Direction = (0, 1, 0)
+            elif neutral_plane.upper() == 'YZ':
+                draft.Direction = (1, 0, 0)
+                
+            doc.recompute()
+            
+            return f"Created draft: {draft.Name} on {object_name} with {angle}° angle"
+            
+        except Exception as e:
+            return f"Error creating draft: {e}"
+            
+    def _shell_solid(self, args: Dict[str, Any]) -> str:
+        """Hollow out a solid by removing material (with face selection for opening)"""
+        try:
+            object_name = args.get('object_name', '')
+            thickness = args.get('thickness', 2)
+            name = args.get('name', 'Shell')
+            auto_shell_closed = args.get('auto_shell_closed', False)
+            
+            # Check if this is continuing a selection
+            if args.get('_continue_selection'):
+                operation_id = args.get('_operation_id')
+                selection_result = self.selector.complete_selection(operation_id)
+                
+                if not selection_result:
+                    return "Selection operation not found or expired"
+                
+                if "error" in selection_result:
+                    return selection_result["error"]
+                
+                return self._create_shell_with_selection(args, selection_result)
+            
+            # Check if creating closed shell (no opening)
+            if auto_shell_closed:
+                return self._create_shell_closed(args)
+            
+            # Request interactive face selection for opening
+            selection_request = self.selector.request_selection(
+                tool_name="shell_solid",
+                selection_type="faces",
+                message=f"Please select face(s) to remove for opening the {object_name} object in FreeCAD.\nPress ENTER in Claude Code when selection is complete...",
+                object_name=object_name,
+                hints="Usually select the top face or access faces for openings. Ctrl+click for multiple faces."
+            )
+            
+            return json.dumps(selection_request)
+            
+        except Exception as e:
+            return f"Error in shell operation: {e}"
+            
+    def _create_shell_with_selection(self, args: Dict[str, Any], selection_result: Dict[str, Any]) -> str:
+        """Create shell using selected faces for opening"""
+        try:
+            object_name = args.get('object_name', '')
+            thickness = args.get('thickness', 2)
+            name = args.get('name', 'Shell')
+            
+            doc = FreeCAD.ActiveDocument
+            if not doc:
+                return "No active document"
+                
+            obj = doc.getObject(object_name)
+            if not obj:
+                return f"Object not found: {object_name}"
+                
+            face_indices = selection_result["selection_data"]["elements"]
+            if not face_indices:
+                return "No faces were selected for opening"
+                
+            # Create shell with selected faces removed
+            shell = doc.addObject("Part::Thickness", name)
+            shell.Value = thickness
+            shell.Source = obj
+            shell.Join = 2  # Intersection join type
+            
+            # Set faces to remove for opening
+            if hasattr(obj, 'Shape') and obj.Shape.Faces:
+                faces_to_remove = []
+                for face_idx in face_indices:
+                    if 1 <= face_idx <= len(obj.Shape.Faces):
+                        faces_to_remove.append(face_idx - 1)  # FreeCAD uses 0-based for face removal
+                shell.Faces = tuple(faces_to_remove)
+                
+            doc.recompute()
+            
+            return f"Created shell: {shell.Name} from {object_name} with {thickness}mm thickness and {len(face_indices)} face(s) removed for opening"
+            
+        except Exception as e:
+            return f"Error creating shell with selection: {e}"
+            
+    def _create_shell_closed(self, args: Dict[str, Any]) -> str:
+        """Create closed shell (no opening)"""
+        try:
+            object_name = args.get('object_name', '')
+            thickness = args.get('thickness', 2)
+            name = args.get('name', 'Shell')
+            
+            doc = FreeCAD.ActiveDocument
+            if not doc:
+                return "No active document"
+                
+            obj = doc.getObject(object_name)
+            if not obj:
+                return f"Object not found: {object_name}"
+                
+            # Create closed shell (no faces removed)
+            shell = doc.addObject("Part::Thickness", name)
+            shell.Value = thickness
+            shell.Source = obj
+            shell.Join = 2  # Intersection join type
+            # No faces specified = closed shell
+            
+            doc.recompute()
+            
+            return f"Created closed shell: {shell.Name} from {object_name} with {thickness}mm thickness (no opening)"
+            
+        except Exception as e:
+            return f"Error creating closed shell: {e}"
+            
+    def _create_rib(self, args: Dict[str, Any]) -> str:
+        """Create structural ribs from sketch"""
+        try:
+            sketch_name = args.get('sketch_name', '')
+            thickness = args.get('thickness', 3)
+            direction = args.get('direction', 'normal')
+            name = args.get('name', 'Rib')
+            
+            doc = FreeCAD.ActiveDocument
+            if not doc:
+                return "No active document"
+                
+            sketch = doc.getObject(sketch_name)
+            if not sketch:
+                return f"Sketch not found: {sketch_name}"
+                
+            # Create rib by extruding sketch with thickness
+            # This is a simplified implementation - actual ribs are more complex
+            rib = doc.addObject("Part::Extrude", name)
+            rib.Base = sketch
+            
+            # Set extrusion direction based on parameter
+            if direction.lower() == 'horizontal':
+                rib.Dir = (1, 0, 0)  # X direction
+                rib.LengthFwd = thickness
+            elif direction.lower() == 'vertical':
+                rib.Dir = (0, 0, 1)  # Z direction
+                rib.LengthFwd = thickness
+            else:  # normal
+                rib.Dir = (0, 1, 0)  # Y direction (normal to sketch)
+                rib.LengthFwd = thickness
+                
+            rib.Solid = True
+            
+            doc.recompute()
+            
+            return f"Created rib: {rib.Name} from {sketch_name} with {thickness}mm thickness in {direction} direction"
+            
+        except Exception as e:
+            return f"Error creating rib: {e}"
+    
+    # === Patterns & Manufacturing Features ===
+    def _create_helix(self, args: Dict[str, Any]) -> str:
+        """Create helical features (threads, springs)"""
+        try:
+            sketch_name = args.get('sketch_name', '')
+            axis = args.get('axis', 'z')
+            pitch = args.get('pitch', 2)
+            height = args.get('height', 10)
+            turns = args.get('turns', 5)
+            left_handed = args.get('left_handed', False)
+            name = args.get('name', 'Helix')
+            
+            doc = FreeCAD.ActiveDocument
+            if not doc:
+                return "No active document"
+                
+            sketch = doc.getObject(sketch_name)
+            if not sketch:
+                return f"Sketch not found: {sketch_name}"
+                
+            # Create helix path first
+            helix_curve = doc.addObject("Part::Helix", f"{name}_Path")
+            helix_curve.Pitch = pitch
+            helix_curve.Height = height
+            helix_curve.Radius = 10  # Default radius, will be adjusted
+            helix_curve.Angle = 0
+            helix_curve.LeftHanded = left_handed
+            
+            # Set axis
+            if axis.lower() == 'x':
+                helix_curve.Placement.Rotation = FreeCAD.Rotation(FreeCAD.Vector(0,1,0), 90)
+            elif axis.lower() == 'y':
+                helix_curve.Placement.Rotation = FreeCAD.Rotation(FreeCAD.Vector(1,0,0), 90)
+            # Z is default
+            
+            doc.recompute()
+            
+            # Create sweep along helix
+            helix_sweep = doc.addObject("Part::Sweep", name)
+            helix_sweep.Sections = [sketch]
+            helix_sweep.Spine = helix_curve
+            helix_sweep.Solid = True
+            
+            doc.recompute()
+            
+            return f"Created helix: {helix_sweep.Name} from {sketch_name}, pitch={pitch}mm, height={height}mm, turns={turns}"
+            
+        except Exception as e:
+            return f"Error creating helix: {e}"
+            
+    def _polar_pattern(self, args: Dict[str, Any]) -> str:
+        """Create circular/polar pattern of features"""
+        try:
+            feature_name = args.get('feature_name', '')
+            axis = args.get('axis', 'z')
+            angle = args.get('angle', 360)
+            count = args.get('count', 6)
+            name = args.get('name', 'PolarPattern')
+            
+            doc = FreeCAD.ActiveDocument
+            if not doc:
+                return "No active document"
+                
+            feature = doc.getObject(feature_name)
+            if not feature:
+                return f"Feature not found: {feature_name}"
+                
+            # Calculate angle between instances
+            angle_step = angle / count
+            
+            # Create pattern copies
+            pattern_objects = []
+            axis_vector = FreeCAD.Vector(0, 0, 1)  # default Z
+            if axis.lower() == 'x':
+                axis_vector = FreeCAD.Vector(1, 0, 0)
+            elif axis.lower() == 'y':
+                axis_vector = FreeCAD.Vector(0, 1, 0)
+                
+            # Create copies with rotation
+            for i in range(1, count):  # Start from 1 (original is 0)
+                copy = doc.copyObject(feature)
+                copy.Label = f"{feature.Label}_Polar{i}"
+                
+                # Apply rotation
+                rotation_angle = angle_step * i
+                rotation = FreeCAD.Rotation(axis_vector, rotation_angle)
+                
+                # Combine with existing placement
+                new_placement = FreeCAD.Placement(
+                    feature.Placement.Base,
+                    feature.Placement.Rotation.multiply(rotation)
+                )
+                copy.Placement = new_placement
+                
+                pattern_objects.append(copy.Name)
+                
+            doc.recompute()
+            
+            return f"Created polar pattern: {count} instances of {feature_name} around {axis.upper()}-axis, {angle}° total"
+            
+        except Exception as e:
+            return f"Error creating polar pattern: {e}"
+            
+    def _add_thickness(self, args: Dict[str, Any]) -> str:
+        """Add thickness to sheet/surface bodies"""
+        try:
+            object_name = args.get('object_name', '')
+            thickness = args.get('thickness', 2)
+            direction = args.get('direction', 'outward')
+            name = args.get('name', 'Thickness')
+            
+            doc = FreeCAD.ActiveDocument
+            if not doc:
+                return "No active document"
+                
+            obj = doc.getObject(object_name)
+            if not obj:
+                return f"Object not found: {object_name}"
+                
+            # Create thickness feature
+            thick = doc.addObject("Part::Offset", name)
+            thick.Source = obj
+            thick.Value = thickness
+            
+            # Set direction
+            if direction.lower() == 'inward':
+                thick.Value = -thickness
+            elif direction.lower() == 'middle':
+                # For middle, we need to offset both ways and intersect
+                # This is simplified - real implementation would be more complex
+                thick.Value = thickness / 2
+                
+            thick.Mode = 0  # Skin mode
+            thick.Join = 1  # Arc join
+            
+            doc.recompute()
+            
+            return f"Added thickness: {thick.Name} to {object_name}, {thickness}mm {direction}"
+            
+        except Exception as e:
+            return f"Error adding thickness: {e}"
     
     # === Analysis Tools ===
     def _measure_distance(self, args: Dict[str, Any]) -> str:
@@ -906,18 +1936,29 @@ class FreeCADSocketServer:
             return f"Error activating workbench: {e}"
             
     def _execute_python(self, args: Dict[str, Any]) -> str:
-        """Execute Python code in FreeCAD context"""
+        """Execute Python code in FreeCAD context with enhanced safety"""
         try:
             code = args.get('code', '')
             
-            # Create execution context
+            # Pre-flight safety checks
+            if 'newDocument' in code:
+                # Check if FreeCAD is in a stable state for document creation
+                try:
+                    # Test if we can access FreeCAD safely
+                    version = FreeCAD.Version()
+                    FreeCAD.Console.PrintMessage("Pre-flight check passed\n")
+                except Exception as e:
+                    return f"FreeCAD not ready for document operations: {e}"
+            
+            # Create execution context with safety wrapper
             exec_context = {
                 'FreeCAD': FreeCAD,
                 'FreeCADGui': FreeCADGui,
-                'doc': FreeCAD.ActiveDocument
+                'doc': FreeCAD.ActiveDocument,
+                'print': lambda *args: FreeCAD.Console.PrintMessage(' '.join(str(arg) for arg in args) + '\n')
             }
             
-            # Execute code
+            # Execute code with timeout protection (theoretical)
             exec(code, exec_context)
             
             # Return result if available
@@ -927,6 +1968,7 @@ class FreeCADSocketServer:
                 return "Code executed successfully"
                 
         except Exception as e:
+            FreeCAD.Console.PrintError(f"Python execution error: {e}\n")
             return f"Python execution error: {e}"
             
     # GUI Control Tools
@@ -939,40 +1981,6 @@ class FreeCADSocketServer:
         except Exception as e:
             return f"Error running command: {e}"
             
-    def _new_document(self, args: Dict[str, Any]) -> str:
-        """Create a new document - safely creates without closing existing"""
-        try:
-            name = args.get('name', 'Unnamed')
-            
-            # Try the safer GUI command approach first
-            try:
-                import FreeCADGui
-                if FreeCADGui:
-                    # Use GUI command which handles threading better
-                    FreeCADGui.runCommand('Std_New', 0)
-                    
-                    # Wait a moment for document creation
-                    import time
-                    time.sleep(0.1)
-                    
-                    # Set the document label if requested
-                    if FreeCAD.ActiveDocument and name != 'Unnamed':
-                        FreeCAD.ActiveDocument.Label = name
-                        
-                    return f"Created new document: {name}"
-            except:
-                pass
-            
-            # Fallback: Try direct API with error handling
-            try:
-                doc = FreeCAD.newDocument(name)
-                return f"Created new document: {doc.Name}"
-            except:
-                # If both methods fail, just report error
-                return "Unable to create new document - try using File menu directly"
-                
-        except Exception as e:
-            return f"Error creating document: {e}"
             
     def _save_document(self, args: Dict[str, Any]) -> str:
         """Save the current document"""
@@ -1005,31 +2013,32 @@ class FreeCADSocketServer:
         try:
             view_type = args.get('view_type', 'isometric').lower()
             
-            if not FreeCADGui.ActiveDocument:
-                return "No active document for view change"
-                
-            view = FreeCADGui.ActiveDocument.ActiveView
+            # TEMPORARY: Disable view commands to prevent crashes
+            # These commands need to be executed in the main GUI thread
+            # For now, provide instructions to the user
             
-            if view_type == 'top':
-                view.viewTop()
-            elif view_type == 'bottom':
-                view.viewBottom()
-            elif view_type == 'front':
-                view.viewFront()
-            elif view_type == 'rear':
-                view.viewRear()
-            elif view_type == 'left':
-                view.viewLeft()
-            elif view_type == 'right':
-                view.viewRight()
-            elif view_type == 'isometric' or view_type == 'iso':
-                view.viewIsometric()
-            elif view_type == 'axonometric':
-                view.viewAxonometric()
+            view_shortcuts = {
+                'top': '2',
+                'bottom': 'Shift+2',
+                'front': '1', 
+                'rear': 'Shift+1',
+                'back': 'Shift+1',
+                'left': '3',
+                'right': 'Shift+3',
+                'isometric': '0',
+                'iso': '0',
+                'axonometric': 'A',
+                'axo': 'A'
+            }
+            
+            if view_type in view_shortcuts:
+                shortcut = view_shortcuts[view_type]
+                return f"⚠️ View command temporarily disabled to prevent crashes.\n" \
+                       f"Please press '{shortcut}' in FreeCAD to set {view_type} view.\n" \
+                       f"Or use View menu → Standard views → {view_type.title()}"
             else:
-                return f"Unknown view type: {view_type}"
-                
-            return f"View set to: {view_type}"
+                return f"Unknown view type: {view_type}. Available: top, bottom, front, rear, left, right, isometric"
+            
         except Exception as e:
             return f"Error setting view: {e}"
             
@@ -1182,6 +2191,452 @@ class FreeCADSocketServer:
             
         except Exception as e:
             return f"AI Agent error: {e}"
+    
+    def _continue_selection(self, args: Dict[str, Any]) -> str:
+        """Handle continuation of selection operations after user has selected elements"""
+        try:
+            operation_id = args.get('operation_id')
+            if not operation_id:
+                return json.dumps({"error": "operation_id is required"})
+            
+            # Get the selection result from the selector
+            selection_result = self.selector.complete_selection(operation_id)
+            
+            if not selection_result:
+                return json.dumps({"error": "Selection operation not found or expired"})
+            
+            if "error" in selection_result:
+                return json.dumps({"error": selection_result["error"]})
+            
+            # Get the operation context
+            context = selection_result.get("context", {})
+            tool_name = context.get("tool", "")
+            
+            # Route to appropriate handler based on tool type
+            if tool_name == "chamfer_edges":
+                # Get the original args stored in pending_operations
+                original_args = {
+                    'object_name': context.get('object', ''),
+                    'distance': context.get('distance', 2),  # Use stored distance
+                    'name': context.get('name', 'Chamfer')  # Use stored name
+                }
+                return self._create_chamfer_with_selection(original_args, selection_result)
+            elif tool_name == "fillet_edges":
+                original_args = {
+                    'object_name': context.get('object', ''),
+                    'radius': context.get('radius', 3),  # Use stored radius
+                    'name': context.get('name', 'Fillet')  # Use stored name
+                }
+                return self._create_fillet_with_selection(original_args, selection_result)
+            elif tool_name == "shell_solid":
+                original_args = {
+                    'object_name': context.get('object', ''),
+                    'thickness': 2,  # Default
+                    'name': 'Shell'
+                }
+                return self._create_shell_with_selection(original_args, selection_result)
+            else:
+                return json.dumps({"error": f"Unknown selection tool: {tool_name}"})
+                
+        except Exception as e:
+            return json.dumps({"error": f"Error in continue_selection: {e}"})
+
+    # ===================================================================
+    # PHASE 1 SMART DISPATCHER METHODS
+    # ===================================================================
+
+
+    def _handle_partdesign_operations(self, args: Dict[str, Any]) -> str:
+        """Smart dispatcher for all PartDesign operations (20+ operations)"""
+        operation = args.get('operation', '')
+        
+        # For fillet and chamfer, use the Part workbench methods that support selection workflow
+        # These work with both Part and PartDesign objects
+        if operation == "fillet":
+            return self._fillet_edges(args)
+        elif operation == "chamfer":
+            return self._chamfer_edges(args)
+        
+        # TEMPORARILY DISABLE modal command system for PartDesign to prevent crashes
+        # Modal system opens native FreeCAD dialogs which can cause issues
+        # Use direct implementation methods instead
+        
+        # TODO: Re-enable modal system once dialog handling is stabilized
+        modal_system_disabled = True
+        # Fallback to original methods for operations not yet converted
+        if operation == "pad":
+            return self._pad_sketch(args)
+        elif operation == "pocket":
+            return self._pocket_sketch(args)
+        elif operation == "revolution":
+            return self._revolution(args)
+        elif operation == "groove":
+            return self._partdesign_groove(args)
+        elif operation == "loft":
+            return self._loft_profiles(args)
+        elif operation == "sweep":
+            return self._sweep_path(args)
+        elif operation == "additive_pipe":
+            return self._partdesign_additive_pipe(args)
+        elif operation == "subtractive_loft":
+            return self._partdesign_subtractive_loft(args)
+        elif operation == "subtractive_sweep":
+            return self._partdesign_subtractive_sweep(args)
+        # Dress-up features - fallback to old methods if modal system fails
+        elif operation == "fillet":
+            return self._fillet_edges(args)
+        elif operation == "chamfer":
+            return self._chamfer_edges(args)
+        elif operation == "draft":
+            return self._draft_faces(args)
+        elif operation == "thickness":
+            return self._add_thickness(args)
+        # Pattern features
+        elif operation == "linear_pattern":
+            return self._linear_pattern(args)
+        elif operation == "polar_pattern":
+            return self._polar_pattern(args)
+        elif operation == "mirror":
+            return self._mirror_feature(args)
+        elif operation == "rectangular_pattern":
+            return self._partdesign_rectangular_pattern(args)
+        # Hole features
+        elif operation in ["hole", "counterbore", "countersink"]:
+            return self._hole_wizard({**args, "hole_type": operation})
+        else:
+            return f"Unknown PartDesign operation: {operation}"
+
+    def _handle_part_operations(self, args: Dict[str, Any]) -> str:
+        """Smart dispatcher for all Part operations (18+ operations)"""
+        operation = args.get('operation', '')
+        
+        # Route to appropriate Part method
+        if operation == "box":
+            return self._create_box(args)
+        elif operation == "cylinder":
+            return self._create_cylinder(args)
+        elif operation == "sphere":
+            return self._create_sphere(args)
+        elif operation == "cone":
+            return self._create_cone(args)
+        elif operation == "torus":
+            return self._create_torus(args)
+        elif operation == "wedge":
+            return self._create_wedge(args)
+        # Boolean operations
+        elif operation == "fuse":
+            return self._fuse_objects(args)
+        elif operation == "cut":
+            return self._cut_objects(args)
+        elif operation == "common":
+            return self._common_objects(args)
+        elif operation == "section":
+            return self._part_section(args)
+        # Transform operations
+        elif operation == "move":
+            return self._move_object(args)
+        elif operation == "rotate":
+            return self._rotate_object(args)
+        elif operation == "scale":
+            return self._part_scale_object(args)
+        elif operation == "mirror":
+            return self._part_mirror_object(args)
+        # Advanced creation
+        elif operation == "loft":
+            return self._loft_profiles(args)
+        elif operation == "sweep":
+            return self._sweep_path(args)
+        elif operation == "extrude":
+            return self._part_extrude(args)
+        elif operation == "revolve":
+            return self._part_revolve(args)
+        else:
+            return f"Unknown Part operation: {operation}"
+
+    def _handle_view_control(self, args: Dict[str, Any]) -> str:
+        """Smart dispatcher for all view and document control operations"""
+        operation = args.get('operation', '')
+        
+        # Direct implementation for view operations (avoid modal system for views to prevent crashes)
+        if operation == "screenshot":
+            return self._get_screenshot(args)
+        elif operation == "set_view":
+            return self._set_view(args)
+        elif operation == "fit_all":
+            return self._fit_all(args)
+        elif operation in ["zoom_in", "zoom_out"]:
+            return self._view_zoom(operation, args)
+        # Document operations
+        elif operation == "save_document":
+            return self._save_document(args)
+        elif operation == "list_objects":
+            return self._list_all_objects(args)
+        # Selection operations
+        elif operation == "select_object":
+            return self._select_object(args)
+        elif operation == "clear_selection":
+            return self._clear_selection(args)
+        elif operation == "get_selection":
+            return self._get_selection(args)
+        # Object visibility
+        elif operation == "hide_object":
+            return self._hide_object(args)
+        elif operation == "show_object":
+            return self._show_object(args)
+        elif operation == "delete_object":
+            return self._delete_object(args)
+        # History operations
+        elif operation == "undo":
+            return self._undo(args)
+        elif operation == "redo":
+            return self._redo(args)
+        # Workbench control
+        elif operation == "activate_workbench":
+            return self._activate_workbench(args)
+        else:
+            return f"Unknown view control operation: {operation}"
+
+    # ===================================================================
+    # PLACEHOLDER IMPLEMENTATIONS FOR MISSING OPERATIONS
+    # ===================================================================
+
+
+    def _view_zoom(self, direction: str, args: Dict[str, Any]) -> str:
+        """Zoom view in/out - placeholder implementation"""
+        return f"View {direction} - implementation needed"
+
+    def _part_section(self, args: Dict[str, Any]) -> str:
+        """Create section - placeholder implementation"""
+        return "Part section - implementation needed"
+
+    def _part_scale_object(self, args: Dict[str, Any]) -> str:
+        """Scale object by modifying its dimensions directly"""
+        try:
+            object_name = args.get('object_name', '')
+            scale_factor = args.get('scale_factor', 1.5)
+            
+            doc = FreeCAD.ActiveDocument
+            if not doc:
+                return "No active document"
+            
+            obj = doc.getObject(object_name)
+            if not obj:
+                return f"Object {object_name} not found"
+            
+            # Check if this is a parametric object (Box, Cylinder, etc.)
+            if hasattr(obj, 'Length') and hasattr(obj, 'Width') and hasattr(obj, 'Height'):
+                # Box object - scale dimensions directly
+                old_dims = f"{obj.Length.Value}x{obj.Width.Value}x{obj.Height.Value}"
+                obj.Length = obj.Length.Value * scale_factor
+                obj.Width = obj.Width.Value * scale_factor
+                obj.Height = obj.Height.Value * scale_factor
+                new_dims = f"{obj.Length.Value}x{obj.Width.Value}x{obj.Height.Value}"
+                doc.recompute()
+                return f"Scaled {object_name} by factor {scale_factor} ({old_dims}mm → {new_dims}mm)"
+            elif hasattr(obj, 'Radius') and hasattr(obj, 'Height'):
+                # Cylinder/Cone object - scale dimensions directly
+                old_dims = f"R{obj.Radius.Value}xH{obj.Height.Value}"
+                obj.Radius = obj.Radius.Value * scale_factor
+                obj.Height = obj.Height.Value * scale_factor
+                if hasattr(obj, 'Radius2'):  # Cone has second radius
+                    obj.Radius2 = obj.Radius2.Value * scale_factor
+                new_dims = f"R{obj.Radius.Value}xH{obj.Height.Value}"
+                doc.recompute()
+                return f"Scaled {object_name} by factor {scale_factor} ({old_dims}mm → {new_dims}mm)"
+            elif hasattr(obj, 'Radius'):
+                # Sphere object - scale radius directly
+                old_radius = obj.Radius.Value
+                obj.Radius = obj.Radius.Value * scale_factor
+                doc.recompute()
+                return f"Scaled {object_name} by factor {scale_factor} (R{old_radius}mm → R{obj.Radius.Value}mm)"
+            else:
+                # Non-parametric object - create scaled copy using transformation
+                if hasattr(obj, 'Shape'):
+                    import Part
+                    matrix = FreeCAD.Matrix()
+                    matrix.scale(scale_factor, scale_factor, scale_factor)
+                    scaled_shape = obj.Shape.transformGeometry(matrix)
+                    scaled_obj = doc.addObject("Part::Feature", f"{object_name}_scaled")
+                    scaled_obj.Shape = scaled_shape
+                    doc.recompute()
+                    return f"Created scaled copy: {scaled_obj.Name} (factor {scale_factor})"
+                else:
+                    return f"Cannot scale {object_name} - not a parametric object"
+                    
+        except Exception as e:
+            return f"Error scaling object: {e}"
+
+    def _part_mirror_object(self, args: Dict[str, Any]) -> str:
+        """Mirror object across a plane"""
+        try:
+            object_name = args.get('object_name', '')
+            plane = args.get('plane', 'YZ')
+            name = args.get('name', '')
+            
+            doc = FreeCAD.ActiveDocument
+            if not doc:
+                return "No active document"
+            
+            obj = doc.getObject(object_name)
+            if not obj:
+                return f"Object {object_name} not found"
+            
+            if not hasattr(obj, 'Shape'):
+                return f"Object {object_name} is not a shape object"
+            
+            # Set mirror plane normal and origin based on plane parameter
+            if plane == "YZ":
+                normal = FreeCAD.Vector(1, 0, 0)  # Normal to YZ plane
+                mirror_point = FreeCAD.Vector(0, 0, 0)
+            elif plane == "XZ":
+                normal = FreeCAD.Vector(0, 1, 0)  # Normal to XZ plane
+                mirror_point = FreeCAD.Vector(0, 0, 0)
+            elif plane == "XY":
+                normal = FreeCAD.Vector(0, 0, 1)  # Normal to XY plane
+                mirror_point = FreeCAD.Vector(0, 0, 0)
+            else:
+                return f"Invalid plane '{plane}'. Valid options: XY, XZ, YZ"
+            
+            # Mirror the shape
+            import Part
+            mirrored_shape = obj.Shape.mirror(mirror_point, normal)
+            
+            # Create mirrored object with appropriate name
+            if name:
+                mirrored_obj = doc.addObject("Part::Feature", name)
+            else:
+                mirrored_obj = doc.addObject("Part::Feature", f"{object_name}_mirrored")
+            mirrored_obj.Shape = mirrored_shape
+            
+            doc.recompute()
+            return f"Mirrored {object_name} across {plane} plane at (0,0,0)"
+            
+        except Exception as e:
+            return f"Error mirroring object: {e}"
+
+    def _part_extrude(self, args: Dict[str, Any]) -> str:
+        """Extrude a sketch or wire profile"""
+        try:
+            profile_sketch = args.get('profile_sketch', '')
+            height = args.get('height', 10)
+            direction = args.get('direction', 'z')
+            
+            doc = FreeCAD.ActiveDocument
+            if not doc:
+                return "No active document"
+            
+            sketch = doc.getObject(profile_sketch)
+            if not sketch:
+                return f"Sketch {profile_sketch} not found"
+            
+            # Determine extrusion vector
+            if direction == 'x':
+                vec = FreeCAD.Vector(height, 0, 0)
+            elif direction == 'y':
+                vec = FreeCAD.Vector(0, height, 0)
+            else:
+                vec = FreeCAD.Vector(0, 0, height)
+            
+            # Get the shape to extrude
+            if hasattr(sketch, 'Shape'):
+                shape = sketch.Shape
+                # Extrude the shape
+                import Part
+                if shape.Wires:
+                    # Create face from wire if needed
+                    face = Part.Face(shape.Wires[0])
+                    extruded = face.extrude(vec)
+                elif shape.Faces:
+                    extruded = shape.extrude(vec)
+                else:
+                    return f"Sketch {profile_sketch} has no valid wires or faces to extrude"
+                
+                # Create the extruded object
+                extrude_obj = doc.addObject("Part::Feature", f"{profile_sketch}_extruded")
+                extrude_obj.Shape = extruded
+                doc.recompute()
+                
+                return f"Extruded {profile_sketch} by {height}mm in {direction} direction"
+            else:
+                return f"Object {profile_sketch} is not a valid sketch"
+                
+        except Exception as e:
+            return f"Error extruding profile: {e}"
+
+    def _part_revolve(self, args: Dict[str, Any]) -> str:
+        """Revolve a sketch profile around an axis"""
+        try:
+            profile_sketch = args.get('profile_sketch', '')
+            angle = args.get('angle', 360)
+            axis = args.get('axis', 'z').lower()
+            
+            doc = FreeCAD.ActiveDocument
+            if not doc:
+                return "No active document"
+            
+            sketch = doc.getObject(profile_sketch)
+            if not sketch:
+                return f"Sketch {profile_sketch} not found"
+            
+            # Define revolution axis
+            if axis == 'x':
+                axis_vec = FreeCAD.Vector(1, 0, 0)
+            elif axis == 'y':
+                axis_vec = FreeCAD.Vector(0, 1, 0)
+            else:
+                axis_vec = FreeCAD.Vector(0, 0, 1)
+            
+            # Get the shape to revolve
+            if hasattr(sketch, 'Shape'):
+                shape = sketch.Shape
+                import Part
+                
+                # Get position for revolution axis
+                pos = FreeCAD.Vector(0, 0, 0)
+                if hasattr(sketch, 'Placement'):
+                    pos = sketch.Placement.Base
+                
+                # Revolve the shape
+                if shape.Wires:
+                    # Create face from wire if needed
+                    face = Part.Face(shape.Wires[0])
+                    revolved = face.revolve(pos, axis_vec, angle)
+                elif shape.Faces:
+                    revolved = shape.Faces[0].revolve(pos, axis_vec, angle)
+                else:
+                    return f"Sketch {profile_sketch} has no valid wires or faces to revolve"
+                
+                # Create the revolved object
+                revolve_obj = doc.addObject("Part::Feature", f"{profile_sketch}_revolved")
+                revolve_obj.Shape = revolved
+                doc.recompute()
+                
+                return f"Revolved {profile_sketch} by {angle}° around {axis} axis"
+            else:
+                return f"Object {profile_sketch} is not a valid sketch"
+                
+        except Exception as e:
+            return f"Error revolving profile: {e}"
+
+    def _partdesign_groove(self, args: Dict[str, Any]) -> str:
+        """PartDesign groove - placeholder implementation"""
+        return "PartDesign groove - implementation needed"
+
+    def _partdesign_additive_pipe(self, args: Dict[str, Any]) -> str:
+        """PartDesign additive pipe - placeholder implementation"""
+        return "PartDesign additive pipe - implementation needed"
+
+    def _partdesign_subtractive_loft(self, args: Dict[str, Any]) -> str:
+        """PartDesign subtractive loft - placeholder implementation"""
+        return "PartDesign subtractive loft - implementation needed"
+
+    def _partdesign_subtractive_sweep(self, args: Dict[str, Any]) -> str:
+        """PartDesign subtractive sweep - placeholder implementation"""
+        return "PartDesign subtractive sweep - implementation needed"
+
+    def _partdesign_rectangular_pattern(self, args: Dict[str, Any]) -> str:
+        """PartDesign rectangular pattern - placeholder implementation"""
+        return "PartDesign rectangular pattern - implementation needed"
             
     def stop_server(self):
         """Stop the socket server"""

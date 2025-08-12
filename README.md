@@ -118,28 +118,29 @@ claude mcp list
 
 ### Basic Commands
 
-In Claude Code, you can use these ContextForm FreeCAD tools:
+In Claude Code, you can use these FreeCAD smart dispatcher tools:
 
 ```bash
 # Check connection
-Use the mcp__ctxform__check_freecad_connection tool
+Use the mcp__freecad__check_freecad_connection tool
 
-# Create 3D objects
-Use the mcp__ctxform__box tool with length=50, width=30, height=20
-Use the mcp__ctxform__cylinder tool with radius=15, height=40
-Use the mcp__ctxform__sphere tool with radius=10
+# Create 3D objects using Part operations
+Use the mcp__freecad__part_operations tool with operation="box", length=50, width=30, height=20
+Use the mcp__freecad__part_operations tool with operation="cylinder", radius=15, height=40
+Use the mcp__freecad__part_operations tool with operation="sphere", radius=10
 
-# Document management
-Use the mcp__ctxform__list_objects tool
-Use the mcp__ctxform__new_document tool with name="MyProject"
-Use the mcp__ctxform__save_document tool
+# Document management using View control
+Use the mcp__freecad__view_control tool with operation="list_objects"
+Use the mcp__freecad__view_control tool with operation="new_document", document_name="MyProject"
+Use the mcp__freecad__view_control tool with operation="save_document"
 
 # Advanced features
-Use the mcp__ctxform__screenshot tool with width=800, height=600
-Use the mcp__ctxform__python tool with code="print('Hello FreeCAD!')"
+Use the mcp__freecad__view_control tool with operation="screenshot", width=800, height=600
+Use the mcp__freecad__execute_python tool with code="print('Hello FreeCAD!')"
 
-# AI Agent for natural language
-Use the mcp__ctxform__ai tool with request="Create a bracket with mounting holes"
+# Create parametric features using PartDesign operations
+Use the mcp__freecad__partdesign_operations tool with operation="pad", sketch_name="Sketch", length=10
+Use the mcp__freecad__partdesign_operations tool with operation="fillet", object_name="Box", radius=2
 ```
 
 ### Example Workflow
@@ -149,73 +150,107 @@ Use the mcp__ctxform__ai tool with request="Create a bracket with mounting holes
 cd freecad-mcp
 claude
 
-# Create objects
-Use the mcp__ctxform__box tool with length=100, width=50, height=25
-Use the mcp__ctxform__cylinder tool with radius=8, height=30, x=50
+# Create base objects
+Use the mcp__freecad__part_operations tool with operation="box", length=100, width=50, height=25
+Use the mcp__freecad__part_operations tool with operation="cylinder", radius=8, height=30, x=50
+
+# Add parametric features  
+Use the mcp__freecad__partdesign_operations tool with operation="fillet", object_name="Box", radius=3
 
 # Take a screenshot
-Use the mcp__ctxform__screenshot tool
+Use the mcp__freecad__view_control tool with operation="screenshot", width=800, height=600
 
-# Use AI for complex requests
-Use the mcp__ctxform__ai tool with request="Position the cylinder on top of the box and make them blue"
+# Create 2D sketch for advanced features
+Use the mcp__freecad__execute_python tool to create sketches programmatically
+Use the mcp__freecad__partdesign_operations tool with operation="pad", sketch_name="Sketch", length=15
 ```
 
-## Available Tools
+## Available Tools - Phase 1 Smart Dispatchers
 
-| Tool | Description | Example Parameters |
-|------|-------------|-------------------|
-| `mcp__ctxform__check_freecad_connection` | Check FreeCAD connection | Basic connectivity test |
-| `mcp__ctxform__test_echo` | Test echo message | `message="hello"` |
-| **Shape Creation** | | |
-| `mcp__ctxform__create_box` | Create boxes | `length=30, width=20, height=15` |
-| `mcp__ctxform__create_cylinder` | Create cylinders | `radius=8, height=25` |
-| `mcp__ctxform__create_sphere` | Create spheres | `radius=10` |
-| `mcp__ctxform__create_cone` | Create cones | `radius1=5, radius2=0, height=10` |
-| `mcp__ctxform__create_torus` | Create torus (donut) | `radius1=10, radius2=3` |
-| `mcp__ctxform__create_wedge` | Create wedges | `xmax=10, ymax=10, zmax=10` |
-| **Boolean Operations** | | |
-| `mcp__ctxform__fuse_objects` | Union objects | `objects=["Box", "Cylinder"]` |
-| `mcp__ctxform__cut_objects` | Subtract objects | `base="Box", tools=["Cylinder"]` |
-| `mcp__ctxform__common_objects` | Intersect objects | `objects=["Box", "Sphere"]` |
-| **Transformations** | | |
-| `mcp__ctxform__move_object` | Move objects | `object_name="Box", x=10, y=5` |
-| `mcp__ctxform__rotate_object` | Rotate objects | `object_name="Box", axis="z", angle=90` |
-| `mcp__ctxform__copy_object` | Copy objects | `object_name="Box", x=20` |
-| `mcp__ctxform__array_object` | Create arrays | `object_name="Box", count=5, spacing_x=15` |
-| **Part Design** | | |
-| `mcp__ctxform__create_sketch` | Create sketches | `plane="XY", name="Sketch001"` |
-| `mcp__ctxform__pad_sketch` | Extrude sketches | `sketch_name="Sketch", length=10` |
-| `mcp__ctxform__pocket_sketch` | Cut from sketches | `sketch_name="Sketch", length=5` |
-| `mcp__ctxform__fillet_edges` | Round edges | `object_name="Box", radius=2` |
-| **Analysis** | | |
-| `mcp__ctxform__measure_distance` | Measure distance | `object1="Box", object2="Cylinder"` |
-| `mcp__ctxform__get_volume` | Calculate volume | `object_name="Box"` |
-| `mcp__ctxform__get_bounding_box` | Get dimensions | `object_name="Box"` |
-| `mcp__ctxform__get_mass_properties` | Mass properties | `object_name="Box"` |
-| **Document** | | |
-| `mcp__ctxform__new_document` | Create document | `name="Project1"` |
-| `mcp__ctxform__save_document` | Save document | Auto or with filename |
-| `mcp__ctxform__list_all_objects` | List all objects | Returns object names and types |
-| **View** | | |
-| `mcp__ctxform__get_screenshot` | Take screenshots | `width=800, height=600` |
-| `mcp__ctxform__set_view` | Set view angle | `view_type="isometric"` |
-| `mcp__ctxform__fit_all` | Fit view | Auto-fit all objects |
-| **Selection** | | |
-| `mcp__ctxform__select_object` | Select objects | `object_name="Box"` |
-| `mcp__ctxform__clear_selection` | Clear selection | No parameters |
-| `mcp__ctxform__get_selection` | Get selected | Returns selected objects |
-| `mcp__ctxform__hide_object` | Hide objects | `object_name="Box"` |
-| `mcp__ctxform__show_object` | Show objects | `object_name="Box"` |
-| `mcp__ctxform__delete_object` | Delete objects | `object_name="Box"` |
-| **History** | | |
-| `mcp__ctxform__undo` | Undo operation | No parameters |
-| `mcp__ctxform__redo` | Redo operation | No parameters |
-| **Advanced** | | |
-| `mcp__ctxform__execute_python` | Run Python code | `code="print('Hello')"` |
-| `mcp__ctxform__run_command` | GUI commands | `command="Std_ViewFitAll"` |
-| `mcp__ctxform__activate_workbench` | Switch workbench | `workbench_name="PartDesignWorkbench"` |
-| **AI** | | |
-| `mcp__ctxform__ai_agent` | Natural language | `request="Create motor mount"` |
+**🚀 New Architecture:** 5 intelligent dispatchers replace 60+ individual tools, aligned with FreeCAD workbenches for optimal Claude Code integration.
+
+| Smart Dispatcher | Handles | Operations Count | Example Usage |
+|------------------|---------|------------------|---------------|
+| **`mcp__freecad__partdesign_operations`** | All parametric features | 20+ operations | `operation="pad", sketch_name="Sketch", length=10` |
+| **`mcp__freecad__part_operations`** | All basic solids & booleans | 18+ operations | `operation="box", length=50, width=30, height=20` |
+| **`mcp__freecad__view_control`** | View, document & selection | 15+ operations | `operation="screenshot", width=800, height=600` |
+| **`mcp__freecad__execute_python`** | Power user Python execution | Direct code | `code="print('Hello FreeCAD!')"` |
+
+### Core Tools
+
+| Tool | Description | Parameters |
+|------|-------------|------------|
+| `mcp__freecad__check_freecad_connection` | Check FreeCAD connection status | None |
+| `mcp__freecad__test_echo` | Test MCP bridge communication | `message="hello"` |
+
+
+### PartDesign Operations (20+ operations)
+
+All parametric feature operations through `mcp__freecad__partdesign_operations`:
+
+| Operation | Description | Key Parameters |
+|-----------|-------------|----------------|
+| `pad` | Extrude sketch | `sketch_name="Sketch", length=10` |
+| `pocket` | Cut from solid | `sketch_name="Sketch", length=5` |
+| `revolution` | Revolve sketch | `sketch_name="Sketch", angle=360, axis="z"` |
+| `loft` | Loft between profiles | `sketches=["Sketch1", "Sketch2"]` |
+| `sweep` | Sweep along path | `profile_sketch="Profile", path_sketch="Path"` |
+| `fillet` | Round edges | `object_name="Box", radius=2` (interactive) |
+| `chamfer` | Chamfer edges | `object_name="Box", distance=1` (interactive) |
+| `draft` | Add draft angle | `object_name="Box", angle=5` |
+| `linear_pattern` | Linear pattern | `feature_name="Pad", count=3, spacing=10` |
+| `polar_pattern` | Circular pattern | `feature_name="Pad", count=6, angle=360` |
+| `mirror` | Mirror feature | `feature_name="Pad", plane="YZ"` |
+| `hole` | Simple hole | `diameter=6, depth=10, x=0, y=0` |
+| `counterbore` | Counterbore hole | `diameter=6, cb_diameter=12, cb_depth=3` |
+| `countersink` | Countersink hole | `diameter=6, angle=90, depth=10` |
+
+### Part Operations (18+ operations)
+
+All basic solid and boolean operations through `mcp__freecad__part_operations`:
+
+| Operation | Description | Key Parameters |
+|-----------|-------------|----------------|
+| `box` | Create box | `length=10, width=10, height=10, x=0, y=0, z=0` |
+| `cylinder` | Create cylinder | `radius=5, height=10, x=0, y=0, z=0` |
+| `sphere` | Create sphere | `radius=5, x=0, y=0, z=0` |
+| `cone` | Create cone | `radius1=5, radius2=0, height=10` |
+| `torus` | Create torus | `radius1=10, radius2=3` |
+| `wedge` | Create wedge | Various dimensions |
+| `fuse` | Union objects | `objects=["Box", "Cylinder"]` |
+| `cut` | Subtract objects | `base="Box", tools=["Cylinder"]` |
+| `common` | Intersect objects | `objects=["Box", "Sphere"]` |
+| `move` | Move object | `object_name="Box", x=10, y=5, z=0` |
+| `rotate` | Rotate object | `object_name="Box", axis="z", angle=90` |
+| `scale` | Scale object | `object_name="Box", scale_factor=1.5` |
+| `mirror` | Mirror object | `object_name="Box", plane="YZ"` |
+
+### View Control Operations (15+ operations)
+
+All view, document and selection operations through `mcp__freecad__view_control`:
+
+| Operation | Description | Key Parameters |
+|-----------|-------------|----------------|
+| `screenshot` | Take screenshot | `width=800, height=600` |
+| `set_view` | Set view angle | `view_type="isometric"` |
+| `fit_all` | Fit all objects | None |
+| `new_document` | Create document | `document_name="Project1"` |
+| `save_document` | Save document | `filename="path/to/file.fcstd"` |
+| `list_objects` | List all objects | None |
+| `select_object` | Select object | `object_name="Box"` |
+| `clear_selection` | Clear selection | None |
+| `hide_object` | Hide object | `object_name="Box"` |
+| `show_object` | Show object | `object_name="Box"` |
+| `delete_object` | Delete object | `object_name="Box"` |
+| `undo` | Undo operation | None |
+| `redo` | Redo operation | None |
+| `activate_workbench` | Switch workbench | `workbench_name="PartDesignWorkbench"` |
+
+### Power User Tool
+
+| Tool | Description | Parameters |
+|------|-------------|------------|
+| **`mcp__freecad__execute_python`** | Execute Python in FreeCAD | `code="App.ActiveDocument.addObject('Part::Box')"` |
 
 ## Project Structure
 
