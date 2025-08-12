@@ -25,6 +25,7 @@ freecad-mcp setup
 ```
 
 **That's it!** The installer automatically:
+- ✅ **Cross-platform**: Works on macOS, Linux, and Windows
 - ✅ Detects your OS and FreeCAD installation
 - ✅ Downloads latest FreeCAD MCP from GitHub
 - ✅ Installs the AI Copilot workbench to correct location

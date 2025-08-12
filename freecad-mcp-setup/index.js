@@ -69,9 +69,29 @@ function checkFreeCadInstallation() {
       // Check common Windows installation paths
       const commonPaths = [
         'C:\\Program Files\\FreeCAD\\bin\\FreeCAD.exe',
-        'C:\\Program Files (x86)\\FreeCAD\\bin\\FreeCAD.exe'
+        'C:\\Program Files (x86)\\FreeCAD\\bin\\FreeCAD.exe',
+        'C:\\FreeCAD\\bin\\FreeCAD.exe',
+        path.join(home, 'AppData\\Local\\FreeCAD\\FreeCAD.exe')
       ];
-      return commonPaths.some(p => fs.existsSync(p));
+      
+      // First try common paths
+      if (commonPaths.some(p => fs.existsSync(p))) {
+        return true;
+      }
+      
+      // Try to find FreeCAD in PATH
+      try {
+        execSync('where freecad', { stdio: 'ignore' });
+        return true;
+      } catch {
+        // Try alternative command
+        try {
+          execSync('freecad --version', { stdio: 'ignore' });
+          return true;
+        } catch {
+          return false;
+        }
+      }
     }
   } catch (error) {
     return false;
@@ -238,13 +258,20 @@ async function downloadAndExtractRepo(tempDir) {
   });
 }
 
-// Extract ZIP file (simple implementation)
+// Extract ZIP file (cross-platform implementation)
 async function extractZip(zipPath, extractDir) {
   const { execSync } = require('child_process');
+  const platform = os.platform();
   
   try {
-    // Use system unzip command
-    execSync(`unzip -q "${zipPath}" -d "${extractDir}"`, { stdio: 'ignore' });
+    if (platform === 'win32') {
+      // Use PowerShell on Windows
+      const psCommand = `Expand-Archive -Path "${zipPath}" -DestinationPath "${extractDir}" -Force`;
+      execSync(`powershell -Command "${psCommand}"`, { stdio: 'ignore' });
+    } else {
+      // Use unzip on macOS/Linux
+      execSync(`unzip -q "${zipPath}" -d "${extractDir}"`, { stdio: 'ignore' });
+    }
     fs.unlinkSync(zipPath); // Clean up zip file
   } catch (error) {
     throw new Error(`Failed to extract archive: ${error.message}`);
