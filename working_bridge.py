@@ -133,12 +133,12 @@ async def main():
                                 "enum": [
                                     # Additive features (5)
                                     "pad", "revolution", "loft", "sweep", "additive_pipe",
-                                    # Subtractive features (4)
-                                    "pocket", "groove", "subtractive_loft", "subtractive_sweep",
-                                    # Dress-up features (4)
-                                    "fillet", "chamfer", "draft", "thickness",
-                                    # Pattern features (4)
-                                    "linear_pattern", "polar_pattern", "mirror", "rectangular_pattern",
+                                    # Subtractive features (2)
+                                    "groove", "subtractive_sweep",
+                                    # Dress-up features (2)
+                                    "fillet", "chamfer",
+                                    # Pattern features (1)
+                                    "mirror",
                                     # Hole features (3)
                                     "hole", "counterbore", "countersink"
                                 ]
@@ -147,7 +147,7 @@ async def main():
                             "object_name": {"type": "string", "description": "Object name for dress-up operations"},
                             "feature_name": {"type": "string", "description": "Feature name for pattern operations"},
                             # Common parameters
-                            "length": {"type": "number", "description": "Length/depth for pad/pocket", "default": 10},
+                            "length": {"type": "number", "description": "Length/depth for pad", "default": 10},
                             "radius": {"type": "number", "description": "Radius for fillet/holes", "default": 1},
                             "distance": {"type": "number", "description": "Distance for chamfer", "default": 1},
                             "angle": {"type": "number", "description": "Angle for revolution/draft", "default": 360},
