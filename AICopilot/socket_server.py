@@ -9,7 +9,9 @@ import json
 import os
 import time
 import asyncio
+import queue
 from typing import Dict, Any, List, Optional
+from PySide import QtCore
 
 # Import our new modal command system
 try:
@@ -25,6 +27,25 @@ except ImportError:
 #     FreeCAD.Console.PrintWarning(f"Could not import FreeCADReActAgent: {e}\n")
 #     FreeCADReActAgent = None
 FreeCADReActAgent = None  # Temporarily disabled
+
+# GUI task queue for thread-safe document operations
+gui_task_queue = queue.Queue()
+gui_response_queue = queue.Queue()
+
+def process_gui_tasks():
+    """Process GUI tasks in the main Qt thread"""
+    while not gui_task_queue.empty():
+        try:
+            task = gui_task_queue.get_nowait()
+            result = task()
+            gui_response_queue.put(result)
+        except queue.Empty:
+            break
+        except Exception as e:
+            gui_response_queue.put(f"GUI task error: {e}")
+    
+    # Schedule next processing
+    QtCore.QTimer.singleShot(100, process_gui_tasks)
 
 class UniversalSelector:
     """Universal selection system for human-in-the-loop CAD operations"""
@@ -201,6 +222,9 @@ class FreeCADSocketServer:
             server_thread = threading.Thread(target=self._server_loop, daemon=True)
             server_thread.start()
             
+            # Initialize GUI task processor
+            QtCore.QTimer.singleShot(100, process_gui_tasks)
+            
             FreeCAD.Console.PrintMessage(f"Socket server started on {self.socket_path}\n")
             return True
             
@@ -278,23 +302,8 @@ class FreeCADSocketServer:
     def _execute_tool(self, tool_name: str, args: Dict[str, Any]) -> str:
         """Execute the requested tool with Phase 1 smart dispatcher support"""
         
-        # Special handling for view_control to prevent crashes
+        # Handle view_control with GUI-safe operations
         if tool_name == "view_control":
-            operation = args.get('operation', '')
-            if operation == "set_view":
-                view_type = args.get('view_type', 'isometric').lower()
-                # Return instructions instead of executing to prevent crash
-                view_shortcuts = {
-                    'top': '2', 'bottom': 'Shift+2',
-                    'front': '1', 'rear': 'Shift+1', 'back': 'Shift+1',
-                    'left': '3', 'right': 'Shift+3',
-                    'isometric': '0', 'iso': '0',
-                    'axonometric': 'A', 'axo': 'A'
-                }
-                if view_type in view_shortcuts:
-                    return f"⚠️ View command disabled (thread safety issue).\nPress '{view_shortcuts[view_type]}' in FreeCAD for {view_type} view"
-                return f"Unknown view: {view_type}"
-            # Other view_control operations can proceed
             return self._handle_view_control(args)
         
         # Handle other smart dispatcher tools
@@ -383,7 +392,7 @@ class FreeCADSocketServer:
         elif tool_name == "get_mass_properties":
             return self._get_mass_properties(args)
         elif tool_name == "get_screenshot":
-            return self._get_screenshot(args)
+            return self._get_screenshot_gui_safe(args)
         elif tool_name == "list_all_objects":
             return self._list_all_objects(args)
         elif tool_name == "activate_workbench":
@@ -398,7 +407,7 @@ class FreeCADSocketServer:
         elif tool_name == "open_document":
             return self._open_document(args)
         elif tool_name == "set_view":
-            return self._set_view(args)
+            return self._set_view_gui_safe(args)
         elif tool_name == "fit_all":
             return self._fit_all(args)
         elif tool_name == "select_object":
@@ -1992,42 +2001,136 @@ class FreeCADSocketServer:
         except Exception as e:
             return f"Error calculating mass properties: {e}"
     
-    def _get_screenshot(self, args: Dict[str, Any]) -> str:
-        """Take screenshot of current view"""
+    def _get_screenshot_gui_safe(self, args: Dict[str, Any]) -> str:
+        """Take screenshot of current view using GUI-safe thread queue"""
         try:
             if not FreeCADGui.ActiveDocument:
                 return "No active document for screenshot"
                 
             import tempfile
             import base64
+            import time
             
             width = args.get('width', 800)
             height = args.get('height', 600)
             
-            view = FreeCADGui.ActiveDocument.ActiveView
+            # Define GUI task
+            def screenshot_task():
+                try:
+                    view = FreeCADGui.ActiveDocument.ActiveView
+                    if not view:
+                        return {"error": "No active view"}
+                    
+                    # Create temporary file
+                    with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp:
+                        tmp_path = tmp.name
+                        
+                    # GUI-safe: Save image in main thread
+                    view.saveImage(tmp_path, width, height, "White")
+                    
+                    # Convert to base64
+                    with open(tmp_path, 'rb') as f:
+                        image_data = base64.b64encode(f.read()).decode('utf-8')
+                    
+                    # Cleanup
+                    os.unlink(tmp_path)
+                    
+                    return {
+                        "success": True,
+                        "image": f"data:image/png;base64,{image_data}",
+                        "width": width,
+                        "height": height
+                    }
+                    
+                except Exception as e:
+                    return {"error": f"Screenshot task failed: {e}"}
             
-            # Create temporary file
-            with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp:
-                tmp_path = tmp.name
-                
-            # Save image
-            view.saveImage(tmp_path, width, height, "White")
+            # Queue task and wait for result
+            gui_task_queue.put(screenshot_task)
             
-            # Convert to base64
-            with open(tmp_path, 'rb') as f:
-                image_data = base64.b64encode(f.read()).decode('utf-8')
+            # Wait for result with timeout
+            start_time = time.time()
+            while time.time() - start_time < 10:  # 10 second timeout
+                try:
+                    result = gui_response_queue.get_nowait()
+                    if isinstance(result, dict):
+                        if "error" in result:
+                            return f"Error taking screenshot: {result['error']}"
+                        elif "success" in result:
+                            return json.dumps({
+                                "image": result["image"],
+                                "width": result["width"],
+                                "height": result["height"]
+                            })
+                    break
+                except queue.Empty:
+                    time.sleep(0.1)
+                    continue
             
-            # Cleanup
-            os.unlink(tmp_path)
-            
-            return json.dumps({
-                "image": f"data:image/png;base64,{image_data}",
-                "width": width,
-                "height": height
-            })
+            return "Screenshot timeout - GUI thread may be busy"
             
         except Exception as e:
-            return f"Error taking screenshot: {e}"
+            return f"Error in screenshot setup: {e}"
+    
+    def _set_view_gui_safe(self, args: Dict[str, Any]) -> str:
+        """Set view orientation using GUI-safe thread queue"""
+        try:
+            if not FreeCADGui.ActiveDocument:
+                return "No active document for view change"
+            
+            view_type = args.get('view_type', 'isometric').lower()
+            import time
+            
+            # Define GUI task
+            def view_task():
+                try:
+                    # Map view types to FreeCAD commands
+                    views = {
+                        'top': 'Std_ViewTop',
+                        'bottom': 'Std_ViewBottom',
+                        'front': 'Std_ViewFront', 
+                        'rear': 'Std_ViewRear',
+                        'back': 'Std_ViewRear',
+                        'left': 'Std_ViewLeft',
+                        'right': 'Std_ViewRight',
+                        'isometric': 'Std_ViewIsometric',
+                        'iso': 'Std_ViewIsometric',
+                        'axonometric': 'Std_ViewAxonometric',
+                        'axo': 'Std_ViewAxonometric'
+                    }
+                    
+                    if view_type in views:
+                        # GUI-safe: Execute view command in main thread
+                        FreeCADGui.runCommand(views[view_type], 0)
+                        return {"success": True, "view": view_type}
+                    else:
+                        return {"error": f"Unknown view type: {view_type}"}
+                        
+                except Exception as e:
+                    return {"error": f"View task failed: {e}"}
+            
+            # Queue task and wait for result
+            gui_task_queue.put(view_task)
+            
+            # Wait for result with timeout
+            start_time = time.time()
+            while time.time() - start_time < 5:  # 5 second timeout
+                try:
+                    result = gui_response_queue.get_nowait()
+                    if isinstance(result, dict):
+                        if "error" in result:
+                            return f"Error setting view: {result['error']}"
+                        elif "success" in result:
+                            return f"✅ View set to {result['view']}"
+                    break
+                except queue.Empty:
+                    time.sleep(0.1)
+                    continue
+            
+            return "View change timeout - GUI thread may be busy"
+            
+        except Exception as e:
+            return f"Error in view setup: {e}"
             
     def _list_all_objects(self, args: Dict[str, Any]) -> str:
         """List all objects in active document"""
@@ -2152,6 +2255,34 @@ class FreeCADSocketServer:
                 return f"Document saved: {doc.Name}"
         except Exception as e:
             return f"Error saving document: {e}"
+    
+    def _create_document_gui_safe(self, args: Dict[str, Any]) -> str:
+        """Create a new document using GUI-safe thread queue"""
+        try:
+            name = args.get('document_name', args.get('name', 'Unnamed'))
+            
+            # Define GUI task
+            def create_doc_task():
+                try:
+                    doc = FreeCAD.newDocument(name)
+                    doc.recompute()
+                    FreeCAD.Console.PrintMessage(f"Document '{name}' created via GUI-safe MCP.\n")
+                    return f"✅ Document '{name}' created successfully"
+                except Exception as e:
+                    return f"Error creating document: {e}"
+            
+            # Queue task for GUI thread
+            gui_task_queue.put(create_doc_task)
+            
+            # Wait for result with timeout
+            try:
+                result = gui_response_queue.get(timeout=5.0)
+                return result
+            except queue.Empty:
+                return "Timeout waiting for document creation"
+                
+        except Exception as e:
+            return f"Error in create_document: {e}"
             
     def _open_document(self, args: Dict[str, Any]) -> str:
         """Open a document"""
@@ -2511,11 +2642,11 @@ class FreeCADSocketServer:
         """Smart dispatcher for all view and document control operations"""
         operation = args.get('operation', '')
         
-        # Direct implementation for view operations (avoid modal system for views to prevent crashes)
+        # GUI-safe implementation for view operations
         if operation == "screenshot":
-            return self._get_screenshot(args)
+            return self._get_screenshot_gui_safe(args)
         elif operation == "set_view":
-            return self._set_view(args)
+            return self._set_view_gui_safe(args)
         elif operation == "fit_all":
             return self._fit_all(args)
         elif operation in ["zoom_in", "zoom_out"]:
@@ -2523,6 +2654,8 @@ class FreeCADSocketServer:
         # Document operations
         elif operation == "save_document":
             return self._save_document(args)
+        elif operation == "create_document":
+            return self._create_document_gui_safe(args)
         elif operation == "list_objects":
             return self._list_all_objects(args)
         # Selection operations
