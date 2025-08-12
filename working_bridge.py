@@ -231,7 +231,7 @@ async def main():
                                     # View operations
                                     "screenshot", "set_view", "fit_all", "zoom_in", "zoom_out",
                                     # Document operations  
-                                    "save_document", "list_objects",
+                                    "create_document", "save_document", "list_objects",
                                     # Selection operations
                                     "select_object", "clear_selection", "get_selection",
                                     # Object visibility
