@@ -60,24 +60,6 @@ npx freecad-mcp-setup setup
 
 The installer will automatically download and install the latest FreeCAD MCP files!
 
-### 📋 What You'll See:
-```
-🚀 FreeCAD MCP Setup
-
-1️⃣ Checking FreeCAD installation...
-✅ FreeCAD found
-
-🔍 Checking for updates...
-2️⃣ Installing FreeCAD MCP...
-⬇️ Downloading FreeCAD MCP...
-✅ FreeCAD workbench installed
-
-3️⃣ Setting up Claude integration...
-✅ MCP server registered with Claude Code
-
-🎉 Installation complete!
-```
-
 ### 🖥️ Using Claude Desktop?
 
 The installer works with Claude Code by default. For Claude Desktop users, after running the installer, you'll need to manually configure:
@@ -137,12 +119,6 @@ cp -r AICopilot ~/Library/Application\ Support/FreeCAD/Mod/
 # Register MCP server with full path
 claude mcp add freecad python3 "$(pwd)/working_bridge.py"
 ```
-
-**Benefits of manual installation:**
-- Full source code access for modification
-- Easy development and testing
-- Custom installation paths
-- Direct git workflow for contributions
 
 ## 🚀 What You Can Do
 
