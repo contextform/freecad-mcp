@@ -68,6 +68,28 @@ npx freecad-mcp-setup setup
 
 The installer will automatically download and install the latest FreeCAD MCP files!
 
+## 🚀 How to Use
+
+### Step 1: Start FreeCAD
+1. Launch FreeCAD
+2. The AI Copilot service starts automatically
+
+### Step 2: Open Claude
+In a new terminal/command prompt:
+```bash
+claude
+```
+
+### Step 3: Verify Connection
+Ask Claude:
+```
+Check FreeCAD connection
+```
+You should see confirmation that FreeCAD tools are available.
+
+### Step 4: Start Creating!
+Just ask Claude to design anything - watch the demo video above to see it model a house!
+
 ### 🖥️ Using Claude Desktop?
 
 The installer works with Claude Code by default. For Claude Desktop users, after running the installer, you'll need to manually configure:
