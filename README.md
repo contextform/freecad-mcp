@@ -8,7 +8,7 @@ Create 3D models, add features, and automate CAD workflows using conversational 
 
 Watch FreeCAD MCP model a house from a simple text command:
 
-https://github.com/contextform/freecad-mcp/assets/demo-house-modeling.mp4
+<video src="demo-house-modeling.mp4" controls></video>
 
 *"Ask FreeCAD to model a house" - and watch it create walls, roof, windows, and door automatically!*
 
@@ -208,6 +208,45 @@ freecad-mcp --help
 2. Run `claude` in terminal
 3. Ask Claude: **"List available tools"**  
 4. Should see `mcp__freecad__*` tools listed ✅
+
+## 🗑️ Uninstall
+
+To completely remove FreeCAD MCP and restore defaults:
+
+**Windows:**
+```cmd
+# Remove from Claude
+claude mcp remove freecad
+
+# Remove FreeCAD workbench
+rmdir /s /q "%APPDATA%\FreeCAD\Mod\AICopilot"
+
+# Remove MCP files
+rmdir /s /q "%USERPROFILE%\.freecad-mcp"
+del "%USERPROFILE%\.freecad-mcp-version"
+
+# Uninstall npm package
+npm uninstall -g freecad-mcp-setup
+```
+
+**macOS/Linux:**
+```bash
+# Remove from Claude
+claude mcp remove freecad
+
+# Remove FreeCAD workbench
+rm -rf ~/.local/share/FreeCAD/Mod/AICopilot  # Linux
+# rm -rf ~/Library/Application\ Support/FreeCAD/Mod/AICopilot  # macOS
+
+# Remove MCP files
+rm -rf ~/.freecad-mcp
+rm -f ~/.freecad-mcp-version
+
+# Uninstall npm package
+npm uninstall -g freecad-mcp-setup
+```
+
+**Claude Desktop users:** Also remove the "freecad" section from your `claude_desktop_config.json` file.
 
 ## 📞 Support
 
