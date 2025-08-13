@@ -18,15 +18,21 @@ Create 3D models, add features, and automate CAD workflows using conversational 
 
 ## ⚡ Super Easy Install
 
-### 🚀 Two-Command Install
-```bash
-npm install -g freecad-mcp-setup
-freecad-mcp setup
+### 🚀 Quick Install
+
+**Windows:**
+```cmd
+python -m pip install --user mcp
+npm install -g freecad-mcp-setup@latest
+npx freecad-mcp-setup setup
 ```
 
-**Windows users:** If you get "command not recognized", try:
-- Restart your command prompt, OR
-- Use: `npx freecad-mcp-setup setup`
+**macOS/Linux:**
+```bash
+pip install mcp
+npm install -g freecad-mcp-setup@latest
+npx freecad-mcp-setup setup
+```
 
 **That's it!** The installer automatically:
 - ✅ **Cross-platform**: Works on macOS, Linux, and Windows
@@ -36,7 +42,23 @@ freecad-mcp setup
 - ✅ Downloads and registers MCP bridge server  
 - ✅ Provides clear next steps for testing
 
-**To update later:** Just run `freecad-mcp setup` again!
+### 📦 Updating
+
+**To update to the latest version:**
+
+**Windows:**
+```cmd
+npm update -g freecad-mcp-setup
+npx freecad-mcp-setup setup
+```
+
+**macOS/Linux:**
+```bash
+npm update -g freecad-mcp-setup
+npx freecad-mcp-setup setup
+```
+
+The installer will automatically download and install the latest FreeCAD MCP files!
 
 ### 📋 What You'll See:
 ```
