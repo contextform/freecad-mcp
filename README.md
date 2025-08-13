@@ -4,6 +4,14 @@
 
 Create 3D models, add features, and automate CAD workflows using conversational AI.
 
+## 🎥 See It In Action
+
+Watch FreeCAD MCP model a house from a simple text command:
+
+https://github.com/contextform/freecad-mcp/assets/demo-house-modeling.mp4
+
+*"Ask FreeCAD to model a house" - and watch it create walls, roof, windows, and door automatically!*
+
 > **🎉 New!** Easy 2-command installation with automatic updates!
 
 ## 📋 Requirements
