@@ -10,15 +10,29 @@ import os
 import time
 import traceback
 import sys
+import platform
+
+# Platform-specific socket handling
+IS_WINDOWS = platform.system() == "Windows"
 
 class DebugFreeCADServer:
     """Minimal debug version of FreeCAD socket server with extensive logging"""
     
     def __init__(self):
-        self.socket_path = "/tmp/freecad_mcp_debug.sock"
+        # Set socket path based on platform
+        if IS_WINDOWS:
+            self.socket_path = "localhost:23457"  # Different port for debug
+            self.host = 'localhost'
+            self.port = 23457
+            self.log_file = open("C:\\temp\\freecad_debug.log", "w")
+        else:
+            self.socket_path = "/tmp/freecad_mcp_debug.sock"
+            self.host = None
+            self.port = None
+            self.log_file = open("/tmp/freecad_debug.log", "w")
+        
         self.server_socket = None
         self.is_running = False
-        self.log_file = open("/tmp/freecad_debug.log", "w")
         
     def log(self, message):
         """Thread-safe logging"""
@@ -36,14 +50,30 @@ class DebugFreeCADServer:
             self.log(f"FreeCAD version: {FreeCAD.Version()}")
             self.log(f"Current documents: {list(FreeCAD.listDocuments().keys())}")
             
-            # Remove existing socket
-            if os.path.exists(self.socket_path):
-                os.remove(self.socket_path)
-                
-            # Create socket
-            self.server_socket = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-            self.server_socket.bind(self.socket_path)
-            self.server_socket.listen(1)
+            # Create socket based on platform
+            if IS_WINDOWS:
+                # Use TCP socket on Windows
+                self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                self.server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                self.server_socket.bind((self.host, self.port))
+                self.server_socket.listen(1)
+            else:
+                # Remove existing Unix socket
+                if os.path.exists(self.socket_path):
+                    os.remove(self.socket_path)
+                    
+                # Use Unix socket on macOS/Linux
+                socket_family = getattr(socket, 'AF_UNIX', socket.AF_INET)
+                if socket_family == socket.AF_INET:
+                    # Fallback to TCP
+                    self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                    self.server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                    self.server_socket.bind(('localhost', 23457))
+                    self.server_socket.listen(1)
+                else:
+                    self.server_socket = socket.socket(socket_family, socket.SOCK_STREAM)
+                    self.server_socket.bind(self.socket_path)
+                    self.server_socket.listen(1)
             self.is_running = True
             
             self.log(f"Debug server listening on {self.socket_path}")

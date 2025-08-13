@@ -10,8 +10,12 @@ import os
 import time
 import asyncio
 import queue
+import platform
 from typing import Dict, Any, List, Optional
 from PySide import QtCore
+
+# Platform-specific socket handling
+IS_WINDOWS = platform.system() == "Windows"
 
 # Import our new modal command system
 try:
@@ -188,7 +192,16 @@ class FreeCADSocketServer:
     """Socket server that runs inside FreeCAD to receive MCP commands"""
     
     def __init__(self):
-        self.socket_path = "/tmp/freecad_mcp.sock"
+        # Set socket path based on platform
+        if IS_WINDOWS:
+            self.socket_path = "localhost:23456"
+            self.host = 'localhost'
+            self.port = 23456
+        else:
+            self.socket_path = "/tmp/freecad_mcp.sock"
+            self.host = None
+            self.port = None
+        
         self.server_socket = None
         self.is_running = False
         self.client_connections = []
@@ -207,25 +220,33 @@ class FreeCADSocketServer:
     def start_server(self):
         """Start the socket server (cross-platform)"""
         try:
-            import platform
-            
-            if platform.system() == "Windows":
-                # Use TCP socket on Windows (AF_UNIX not supported)
+            if IS_WINDOWS:
+                # Use TCP socket on Windows
                 self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                 self.server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-                self.server_socket.bind(('localhost', 23456))  # Use fixed port
+                self.server_socket.bind((self.host, self.port))
                 self.server_socket.listen(5)
-                self.socket_path = "localhost:23456"  # Update for bridge reference
-                FreeCAD.Console.PrintMessage("Using TCP socket on Windows (localhost:23456)\n")
+                FreeCAD.Console.PrintMessage(f"Socket server started on {self.host}:{self.port} (Windows TCP)\n")
             else:
                 # Use Unix domain socket on macOS/Linux
                 if os.path.exists(self.socket_path):
                     os.remove(self.socket_path)
-                    
-                self.server_socket = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-                self.server_socket.bind(self.socket_path)
-                self.server_socket.listen(5)
-                FreeCAD.Console.PrintMessage(f"Using Unix socket: {self.socket_path}\n")
+                
+                # Use getattr to safely access AF_UNIX (returns 1 on Unix, None on Windows)
+                socket_family = getattr(socket, 'AF_UNIX', socket.AF_INET)
+                if socket_family == socket.AF_INET:
+                    # Fallback to TCP if AF_UNIX not available
+                    self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                    self.server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                    self.server_socket.bind(('localhost', 23456))
+                    self.server_socket.listen(5)
+                    FreeCAD.Console.PrintMessage("Socket server started on localhost:23456 (TCP fallback)\n")
+                else:
+                    # Use Unix socket
+                    self.server_socket = socket.socket(socket_family, socket.SOCK_STREAM)
+                    self.server_socket.bind(self.socket_path)
+                    self.server_socket.listen(5)
+                    FreeCAD.Console.PrintMessage(f"Socket server started on {self.socket_path} (Unix socket)\n")
             
             self.is_running = True
             
