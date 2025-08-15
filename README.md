@@ -248,11 +248,6 @@ npm uninstall -g freecad-mcp-setup
 
 **Claude Desktop users:** Also remove the "freecad" section from your `claude_desktop_config.json` file.
 
-## 📞 Support
-
-- [Issues](https://github.com/contextform/freecad-mcp/issues)
-- [Discussions](https://github.com/contextform/freecad-mcp/discussions)
-
 ---
 
 **Ready to design with AI? Install and start creating!** 🚀
