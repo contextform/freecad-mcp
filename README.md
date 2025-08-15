@@ -1,223 +1,258 @@
-# FreeCAD MCP
+# FreeCAD MCP - AI-Powered CAD
 
-**FreeCAD MCP** is an open-source Model Context Protocol (MCP) server that enables AI assistants to interact with FreeCAD for automated CAD workflows.
+**Control FreeCAD with Claude AI through natural language!**
 
-## What is FreeCAD MCP?
+Create 3D models, add features, and automate CAD workflows using conversational AI.
 
-FreeCAD MCP provides a standardized interface for AI models like Claude, ChatGPT, and other LLMs to directly control and automate FreeCAD operations. By implementing the Model Context Protocol, FreeCAD MCP bridges the gap between natural language AI assistants and professional CAD automation.
+## 🎥 See It In Action
 
-## Key Features
+Watch FreeCAD MCP model a house from a simple text command:
 
-- **Full FreeCAD API Access** - Complete programmatic control over FreeCAD's Python API
-- **Sketch Creation** - Automated 2D sketch generation with geometric constraints
-- **3D Operations** - Support for extrude, revolve, loft, sweep, and other 3D operations
-- **Parametric Design** - Modify parameters and see real-time updates in your models
-- **File Management** - Open, save, and export in multiple CAD formats (STEP, IGES, STL, etc.)
-- **Assembly Tools** - Create and manage complex assemblies with constraints
+[demo-house-modeling.mp4](https://github.com/contextform/freecad-mcp/blob/main/demo-house-modeling.mp4)
 
-## Quick Start
+*"Ask FreeCAD to model a house" - and watch it create walls, roof, windows, and door automatically!*
 
+> **🎉 New!** Easy 2-command installation with automatic updates!
+
+## 📋 Requirements
+
+**Before installation, make sure you have:**
+
+- **FreeCAD 1.0+** - [Download here](https://freecad.org/downloads.php)
+- **Node.js & npm** - [Download here](https://nodejs.org/)
+- **Claude Code** - `npm install -g claude-code` (recommended)
+
+*Python 3.9+ is included with FreeCAD automatically*
+
+## ⚡ Super Easy Install
+
+### 🚀 Quick Install
+
+**Windows:**
+```cmd
+python -m pip install --user mcp
+npm install -g freecad-mcp-setup@latest
+npx freecad-mcp-setup setup
+```
+
+**macOS/Linux:**
 ```bash
-# Clone the FreeCAD MCP repository
-git clone https://github.com/contextform/freecad-mcp.git
-
-# Navigate to the project directory
-cd freecad-mcp
-
-# Install dependencies
-npm install
-
-# Start the MCP server
-npm start
+pip install mcp
+npm install -g freecad-mcp-setup@latest
+npx freecad-mcp-setup setup
 ```
 
-## Prerequisites
+**That's it!** The installer automatically:
+- ✅ **Cross-platform**: Works on macOS, Linux, and Windows
+- ✅ Detects your OS and FreeCAD installation
+- ✅ Downloads latest FreeCAD MCP from GitHub
+- ✅ Installs the AI Copilot workbench to correct location
+- ✅ Downloads and registers MCP bridge server  
+- ✅ Provides clear next steps for testing
 
-- FreeCAD 0.21 or higher installed
-- Node.js 18+ and npm
-- Python 3.8+ (for FreeCAD Python API)
+### 📦 Updating
 
-## Installation
+**To update to the latest version:**
 
-### Option 1: NPM (Recommended)
+**Windows:**
+```cmd
+npm update -g freecad-mcp-setup
+npx freecad-mcp-setup setup
+```
 
+**macOS/Linux:**
 ```bash
-npm install -g freecad-mcp
-freecad-mcp start
+npm update -g freecad-mcp-setup
+npx freecad-mcp-setup setup
 ```
 
-### Option 2: From Source
+The installer will automatically download and install the latest FreeCAD MCP files!
 
+## 🚀 How to Use
+
+### Step 1: Start FreeCAD
+1. Launch FreeCAD
+2. The AI Copilot service starts automatically
+
+### Step 2: Open Claude
+In a new terminal/command prompt:
 ```bash
-git clone https://github.com/contextform/freecad-mcp.git
-cd freecad-mcp
-npm install
-npm run build
-npm start
+claude
 ```
 
-## Configuration
-
-Create a `config.json` file in your project root:
-
-```json
-{
-  "freecad": {
-    "path": "/usr/bin/freecad",
-    "pythonPath": "/usr/bin/python3"
-  },
-  "server": {
-    "port": 3000,
-    "host": "localhost"
-  }
-}
+### Step 3: Verify Connection
+Ask Claude:
 ```
-
-## Usage Examples
-
-### Creating a Simple Box
-
-Send this to your AI assistant connected via FreeCAD MCP:
-
+Check FreeCAD connection
 ```
-Create a box with dimensions 100x50x25mm
-```
+You should see confirmation that FreeCAD tools are available.
 
-### Parametric Design
+### Step 4: Start Creating!
+Just ask Claude to design anything - watch the demo video above to see it model a house!
 
-```
-Create a parametric cylinder with:
-- Radius parameter: 20mm
-- Height parameter: 50mm
-- Make both parameters editable
-```
+### 🖥️ Using Claude Desktop?
 
-### Complex Operations
+The installer works with Claude Code by default. For Claude Desktop users, after running the installer, you'll need to manually configure:
 
-```
-1. Create a sketch on the XY plane
-2. Draw a circle with radius 30mm
-3. Extrude the sketch 40mm
-4. Add a fillet of 5mm to the top edge
-```
+**Add to your Claude Desktop config:**
 
-## API Documentation
-
-FreeCAD MCP exposes the following MCP tools:
-
-### Core Tools
-
-- `create_document` - Create a new FreeCAD document
-- `open_document` - Open an existing FreeCAD file
-- `save_document` - Save the current document
-- `export_document` - Export to various CAD formats
-
-### Sketch Tools
-
-- `create_sketch` - Create a new sketch on a plane
-- `add_line` - Add a line to the active sketch
-- `add_circle` - Add a circle to the active sketch
-- `add_constraint` - Add geometric constraints
-
-### 3D Operations
-
-- `extrude` - Extrude a sketch or face
-- `revolve` - Revolve a sketch around an axis
-- `loft` - Create a loft between profiles
-- `fillet` - Add fillets to edges
-- `chamfer` - Add chamfers to edges
-
-### Parameter Management
-
-- `add_parameter` - Create a named parameter
-- `update_parameter` - Modify parameter value
-- `list_parameters` - Get all parameters
-
-## Use Cases
-
-### 1. AI-Assisted Design
-Let AI help you create complex geometries by describing what you need in natural language.
-
-### 2. Batch Processing
-Automate repetitive CAD tasks across multiple files.
-
-### 3. Design Optimization
-Use AI to explore and optimize design parameters.
-
-### 4. Documentation Generation
-Automatically generate technical drawings and documentation.
-
-### 5. Quality Assurance
-Implement automated design validation and testing.
-
-## Integration with AI Assistants
-
-### Claude Desktop
-
-Add to your Claude Desktop configuration:
-
+*macOS/Linux:*
 ```json
 {
   "mcpServers": {
-    "freecad-mcp": {
-      "command": "npx",
-      "args": ["freecad-mcp", "start"]
+    "freecad": {
+      "command": "python3",
+      "args": ["/Users/yourusername/.freecad-mcp/working_bridge.py"]
     }
   }
 }
 ```
 
-### Custom Integration
-
-```javascript
-import { MCPClient } from '@anthropic/mcp';
-import { FreeCADMCP } from 'freecad-mcp';
-
-const client = new MCPClient();
-const freecadServer = new FreeCADMCP();
-
-await client.connect(freecadServer);
+*Windows:*
+```json
+{
+  "mcpServers": {
+    "freecad": {
+      "command": "python3",
+      "args": ["C:\\Users\\yourusername\\.freecad-mcp\\working_bridge.py"]
+    }
+  }
+}
 ```
 
-## Contributing
+*Config file locations:*
+- **macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
+- **Windows**: `%APPDATA%/Claude/claude_desktop_config.json`
 
-We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) for details.
+### 🔧 Manual Installation (Developers)
 
-### Development Setup
+**For developers who prefer full control:**
 
 ```bash
-# Clone the repo
+# Clone the repository
 git clone https://github.com/contextform/freecad-mcp.git
 cd freecad-mcp
 
 # Install dependencies
-npm install
+python3 -m pip install mcp
 
-# Run tests
-npm test
+# Install FreeCAD workbench (choose your OS):
+# macOS:
+cp -r AICopilot ~/Library/Application\ Support/FreeCAD/Mod/
 
-# Start development server
-npm run dev
+# Linux:
+# cp -r AICopilot ~/.local/share/FreeCAD/Mod/
+
+# Windows:
+# cp -r AICopilot %APPDATA%\FreeCAD\Mod\
+
+# Register MCP server with full path
+claude mcp add freecad python3 "$(pwd)/working_bridge.py"
 ```
 
-## License
+## 🚀 What You Can Do
 
-FreeCAD MCP is released under the MIT License. See [LICENSE](LICENSE) for details.
+**Create 3D Objects:**
+```
+Create a 50x30x20mm box with 5mm fillets
+Make a cylinder with 25mm radius and 60mm height
+```
 
-## Support
+**Parametric Features:**
+```
+Add a 3mm fillet to Pad001
+Create a 6mm counterbore hole at position (20,10)
+Make a linear pattern of 5 copies spaced 30mm apart
+```
 
-- **Documentation**: [https://contextform.dev/freecad-mcp/](https://contextform.dev/freecad-mcp/)
-- **Issues**: [GitHub Issues](https://github.com/contextform/freecad-mcp/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/contextform/freecad-mcp/discussions)
+**Advanced Operations:**
+```
+Create a PartDesign pad from Sketch001 with 15mm length
+Add a mirror of Feature001 across the XZ plane
+Take an isometric screenshot at 1200x800
+```
 
-## Acknowledgments
+## 🛠️ Available Operations
 
-FreeCAD MCP is built on top of the excellent [FreeCAD](https://www.freecadweb.org/) open-source CAD platform and implements the [Model Context Protocol](https://github.com/anthropics/mcp) specification.
+- **PartDesign (13 ops)**: Pad, Revolution, Fillet, Chamfer, Holes, Patterns
+- **Part (18 ops)**: Primitives, Booleans, Transforms, Advanced shapes
+- **View Control (14 ops)**: Screenshots, Zoom, Selection, Document management
+- **Python Execution**: Custom FreeCAD scripts for complex operations
 
-## About ContextForm
 
-FreeCAD MCP is developed by [ContextForm](https://contextform.dev), specializing in AI-powered CAD automation tools.
+## 🐛 Troubleshooting
+
+**Installation Problems:**
+```bash
+# Re-run the installer (fixes most issues)
+freecad-mcp setup
+
+# Force update to latest version  
+freecad-mcp setup --update
+
+# Get help
+freecad-mcp --help
+```
+
+**Common Issues:**
+
+| Problem | Solution |
+|---------|----------|
+| **"FreeCAD not found"** | Install FreeCAD 1.0+ from [freecad.org](https://freecad.org/downloads.php) |
+| **"Claude Code not found"** | Run `npm install -g claude-code` |
+| **"npm command not found"** | Install Node.js from [nodejs.org](https://nodejs.org/) |
+| **MCP registration failed** | Manual setup: `claude mcp add freecad python3 ~/.freecad-mcp/working_bridge.py` |
+
+**Testing Connection:**
+1. Launch FreeCAD first (AI service auto-starts)
+2. Run `claude` in terminal
+3. Ask Claude: **"List available tools"**  
+4. Should see `mcp__freecad__*` tools listed ✅
+
+## 🗑️ Uninstall
+
+To completely remove FreeCAD MCP and restore defaults:
+
+**Windows:**
+```cmd
+# Remove from Claude
+claude mcp remove freecad
+
+# Remove FreeCAD workbench
+rmdir /s /q "%APPDATA%\FreeCAD\Mod\AICopilot"
+
+# Remove MCP files
+rmdir /s /q "%USERPROFILE%\.freecad-mcp"
+del "%USERPROFILE%\.freecad-mcp-version"
+
+# Uninstall npm package
+npm uninstall -g freecad-mcp-setup
+```
+
+**macOS/Linux:**
+```bash
+# Remove from Claude
+claude mcp remove freecad
+
+# Remove FreeCAD workbench
+rm -rf ~/.local/share/FreeCAD/Mod/AICopilot  # Linux
+# rm -rf ~/Library/Application\ Support/FreeCAD/Mod/AICopilot  # macOS
+
+# Remove MCP files
+rm -rf ~/.freecad-mcp
+rm -f ~/.freecad-mcp-version
+
+# Uninstall npm package
+npm uninstall -g freecad-mcp-setup
+```
+
+**Claude Desktop users:** Also remove the "freecad" section from your `claude_desktop_config.json` file.
+
+## 📞 Support
+
+- [Issues](https://github.com/contextform/freecad-mcp/issues)
+- [Discussions](https://github.com/contextform/freecad-mcp/discussions)
 
 ---
 
-**Keywords**: FreeCAD MCP, FreeCAD automation, Model Context Protocol, CAD automation, FreeCAD API, FreeCAD tools, AI CAD, parametric design, 3D modeling automation
+**Ready to design with AI? Install and start creating!** 🚀
