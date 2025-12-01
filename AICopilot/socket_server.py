@@ -2193,10 +2193,23 @@ class FreeCADSocketServer:
         except Exception as e:
             return f"Error activating workbench: {e}"
             
+           
     def _execute_python(self, args: Dict[str, Any]) -> str:
-        """Execute Python code in FreeCAD context with enhanced safety and logging"""
+        """Execute Python code in FreeCAD context with expression value capture.
+        
+        This method handles both statements and expressions, returning the value
+        of the last expression if present (similar to IPython/Jupyter behavior).
+        
+        Examples:
+            "1 + 1"                    -> "2"
+            "x = 5"                    -> "Code executed successfully"
+            "x = 5\nx * 2"             -> "10"
+            "FreeCAD.ActiveDocument"   -> "<Document object>"
+            "result = 42"              -> "42" (explicit result variable)
+        """
         import traceback
         import time
+        import ast
         
         try:
             code = args.get('code', '')
@@ -2227,29 +2240,76 @@ class FreeCADSocketServer:
             exec_context = {
                 'FreeCAD': FreeCAD,
                 'FreeCADGui': FreeCADGui,
+                'App': FreeCAD,  # Common alias
+                'Gui': FreeCADGui,  # Common alias
                 'doc': FreeCAD.ActiveDocument,
-                'print': lambda *args: FreeCAD.Console.PrintMessage('CODE: ' + ' '.join(str(arg) for arg in args) + '\n')
+                'print': lambda *args: FreeCAD.Console.PrintMessage(' '.join(str(arg) for arg in args) + '\n')
             }
             
-            # Execute with detailed logging
+            # Also import Part if available
+            try:
+                import Part
+                exec_context['Part'] = Part
+            except ImportError:
+                pass
+            
+            # Execute with expression value capture
             FreeCAD.Console.PrintMessage("EXEC: Starting code execution...\n")
             
             try:
-                exec(code, exec_context)
+                # Parse the code into an AST
+                tree = ast.parse(code)
+                
+                result_value = None
+                
+                # Check if the last statement is an expression
+                if tree.body and isinstance(tree.body[-1], ast.Expr):
+                    # Execute all statements except the last
+                    if len(tree.body) > 1:
+                        exec_body = tree.body[:-1]
+                        exec_module = ast.Module(body=exec_body, type_ignores=[])
+                        ast.fix_missing_locations(exec_module)
+                        exec(compile(exec_module, '<string>', 'exec'), exec_context)
+                    
+                    # Evaluate the last expression and capture its value
+                    last_expr = tree.body[-1].value
+                    expr_ast = ast.Expression(body=last_expr)
+                    ast.fix_missing_locations(expr_ast)
+                    result_value = eval(compile(expr_ast, '<string>', 'eval'), exec_context)
+                    
+                else:
+                    # No trailing expression - just execute everything
+                    exec(code, exec_context)
+                    
+                    # Check for explicit 'result' variable (backwards compatibility)
+                    if 'result' in exec_context:
+                        result_value = exec_context['result']
+                
                 FreeCAD.Console.PrintMessage("EXEC: Code completed successfully\n")
+                
+                # Return the result
+                if result_value is not None:
+                    # Convert to string representation
+                    result_str = repr(result_value)
+                    FreeCAD.Console.PrintMessage(f"EXEC: Result: {result_str}\n")
+                    return result_str
+                else:
+                    FreeCAD.Console.PrintMessage("EXEC: No result value\n")
+                    return "Code executed successfully"
+                    
+            except SyntaxError as syn_err:
+                # If AST parsing fails, fall back to simple exec
+                FreeCAD.Console.PrintWarning(f"EXEC: AST parse failed, using simple exec: {syn_err}\n")
+                exec(code, exec_context)
+                
+                if 'result' in exec_context:
+                    return str(exec_context['result'])
+                return "Code executed successfully"
+                
             except Exception as exec_error:
                 FreeCAD.Console.PrintError(f"EXEC: Code execution failed: {exec_error}\n")
                 FreeCAD.Console.PrintError(f"EXEC: Traceback: {traceback.format_exc()}\n")
                 raise exec_error
-            
-            # Return result if available
-            if 'result' in exec_context:
-                result = str(exec_context['result'])
-                FreeCAD.Console.PrintMessage(f"EXEC: Result: {result}\n")
-                return result
-            else:
-                FreeCAD.Console.PrintMessage("EXEC: No explicit result, returning success\n")
-                return "Code executed successfully"
                 
         except Exception as e:
             error_msg = f"Python execution error: {e}"
@@ -2259,7 +2319,7 @@ class FreeCADSocketServer:
             FreeCAD.Console.PrintError(f"EXEC TRACEBACK: {traceback_msg}\n")
             
             return error_msg
-            
+ 
     # GUI Control Tools
     def _run_command(self, args: Dict[str, Any]) -> str:
         """Run a FreeCAD GUI command"""
