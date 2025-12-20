@@ -2192,74 +2192,160 @@ class FreeCADSocketServer:
             return f"Activated workbench: {workbench_name}"
         except Exception as e:
             return f"Error activating workbench: {e}"
-            
+
     def _execute_python(self, args: Dict[str, Any]) -> str:
-        """Execute Python code in FreeCAD context with enhanced safety and logging"""
+        """Execute Python code in FreeCAD context with expression value capture.
+        
+        This method handles both statements and expressions, returning the value
+        of the last expression if present (similar to IPython/Jupyter behavior).
+        
+        All code execution happens on the main GUI thread to prevent crashes
+        when code creates documents, modifies views, or performs other GUI operations.
+        
+        Examples:
+            "1 + 1"                    -> "2"
+            "x = 5"                    -> "Code executed successfully"
+            "x = 5\nx * 2"             -> "10"
+            "FreeCAD.ActiveDocument"   -> "<Document object>"
+            "result = 42"              -> "42" (explicit result variable)
+        """
         import traceback
         import time
+        import ast
         
-        try:
-            code = args.get('code', '')
-            timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
-            
-            FreeCAD.Console.PrintMessage(f"[{timestamp}] EXEC START: {repr(code[:100])}...\n")
-            
-            # Enhanced pre-flight safety checks
-            if 'newDocument' in code:
-                FreeCAD.Console.PrintMessage("DETECTED: Document creation operation\n")
-                try:
-                    # Comprehensive state check
-                    version = FreeCAD.Version()
-                    docs = FreeCAD.listDocuments()
-                    active = FreeCAD.ActiveDocument
-                    
-                    FreeCAD.Console.PrintMessage(f"Pre-flight: Version={version}, Docs={list(docs.keys())}, Active={active}\n")
-                    
-                    # Test memory allocation
-                    test_list = list(range(1000))  # Small memory test
-                    FreeCAD.Console.PrintMessage("Pre-flight: Memory test passed\n")
-                    
-                except Exception as e:
-                    FreeCAD.Console.PrintError(f"Pre-flight FAILED: {e}\n")
-                    return f"FreeCAD not ready for document operations: {e}"
-            
-            # Create enhanced execution context
-            exec_context = {
-                'FreeCAD': FreeCAD,
-                'FreeCADGui': FreeCADGui,
-                'doc': FreeCAD.ActiveDocument,
-                'print': lambda *args: FreeCAD.Console.PrintMessage('CODE: ' + ' '.join(str(arg) for arg in args) + '\n')
-            }
-            
-            # Execute with detailed logging
-            FreeCAD.Console.PrintMessage("EXEC: Starting code execution...\n")
-            
+        code = args.get('code', '')
+        timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+        
+        FreeCAD.Console.PrintMessage(f"[{timestamp}] EXEC START: {repr(code[:100])}...\n")
+        
+        def execute_task():
+            """Task to run on GUI thread"""
             try:
-                exec(code, exec_context)
-                FreeCAD.Console.PrintMessage("EXEC: Code completed successfully\n")
-            except Exception as exec_error:
-                FreeCAD.Console.PrintError(f"EXEC: Code execution failed: {exec_error}\n")
-                FreeCAD.Console.PrintError(f"EXEC: Traceback: {traceback.format_exc()}\n")
-                raise exec_error
-            
-            # Return result if available
-            if 'result' in exec_context:
-                result = str(exec_context['result'])
-                FreeCAD.Console.PrintMessage(f"EXEC: Result: {result}\n")
-                return result
-            else:
-                FreeCAD.Console.PrintMessage("EXEC: No explicit result, returning success\n")
-                return "Code executed successfully"
+                # Enhanced pre-flight safety checks
+                if 'newDocument' in code:
+                    FreeCAD.Console.PrintMessage("DETECTED: Document creation operation\n")
+                    try:
+                        version = FreeCAD.Version()
+                        docs = FreeCAD.listDocuments()
+                        active = FreeCAD.ActiveDocument
+                        FreeCAD.Console.PrintMessage(f"Pre-flight: Version={version}, Docs={list(docs.keys())}, Active={active}\n")
+                        test_list = list(range(1000))
+                        FreeCAD.Console.PrintMessage("Pre-flight: Memory test passed\n")
+                    except Exception as e:
+                        FreeCAD.Console.PrintError(f"Pre-flight FAILED: {e}\n")
+                        return {"error": f"FreeCAD not ready for document operations: {e}"}
                 
-        except Exception as e:
-            error_msg = f"Python execution error: {e}"
-            traceback_msg = traceback.format_exc()
-            
-            FreeCAD.Console.PrintError(f"EXEC ERROR: {error_msg}\n")
-            FreeCAD.Console.PrintError(f"EXEC TRACEBACK: {traceback_msg}\n")
-            
-            return error_msg
-            
+                # Create enhanced execution context
+                exec_context = {
+                    'FreeCAD': FreeCAD,
+                    'FreeCADGui': FreeCADGui,
+                    'App': FreeCAD,
+                    'Gui': FreeCADGui,
+                    'doc': FreeCAD.ActiveDocument,
+                    'print': lambda *args: FreeCAD.Console.PrintMessage(' '.join(str(arg) for arg in args) + '\n')
+                }
+                
+                # Also import Part if available
+                try:
+                    import Part
+                    exec_context['Part'] = Part
+                except ImportError:
+                    pass
+                
+                # Also import Vector for convenience
+                try:
+                    from FreeCAD import Vector
+                    exec_context['Vector'] = Vector
+                except ImportError:
+                    pass
+                
+                FreeCAD.Console.PrintMessage("EXEC: Starting code execution on GUI thread...\n")
+                
+                try:
+                    # Parse the code into an AST
+                    tree = ast.parse(code)
+                    
+                    result_value = None
+                    
+                    # Check if the last statement is an expression
+                    if tree.body and isinstance(tree.body[-1], ast.Expr):
+                        # Execute all statements except the last
+                        if len(tree.body) > 1:
+                            exec_body = tree.body[:-1]
+                            exec_module = ast.Module(body=exec_body, type_ignores=[])
+                            ast.fix_missing_locations(exec_module)
+                            exec(compile(exec_module, '<string>', 'exec'), exec_context)
+                        
+                        # Evaluate the last expression and capture its value
+                        last_expr = tree.body[-1].value
+                        expr_ast = ast.Expression(body=last_expr)
+                        ast.fix_missing_locations(expr_ast)
+                        result_value = eval(compile(expr_ast, '<string>', 'eval'), exec_context)
+                        
+                    else:
+                        # No trailing expression - just execute everything
+                        exec(code, exec_context)
+                        
+                        # Check for explicit 'result' variable (backwards compatibility)
+                        if 'result' in exec_context:
+                            result_value = exec_context['result']
+                    
+                    FreeCAD.Console.PrintMessage("EXEC: Code completed successfully\n")
+                    
+                    # Return the result
+                    if result_value is not None:
+                        result_str = repr(result_value)
+                        FreeCAD.Console.PrintMessage(f"EXEC: Result: {result_str}\n")
+                        return {"success": True, "result": result_str}
+                    else:
+                        FreeCAD.Console.PrintMessage("EXEC: No result value\n")
+                        return {"success": True, "result": "Code executed successfully"}
+                        
+                except SyntaxError as syn_err:
+                    # If AST parsing fails, fall back to simple exec
+                    FreeCAD.Console.PrintWarning(f"EXEC: AST parse failed, using simple exec: {syn_err}\n")
+                    exec(code, exec_context)
+                    
+                    if 'result' in exec_context:
+                        return {"success": True, "result": str(exec_context['result'])}
+                    return {"success": True, "result": "Code executed successfully"}
+                    
+                except Exception as exec_error:
+                    FreeCAD.Console.PrintError(f"EXEC: Code execution failed: {exec_error}\n")
+                    FreeCAD.Console.PrintError(f"EXEC: Traceback: {traceback.format_exc()}\n")
+                    return {"error": f"Python execution error: {exec_error}"}
+                    
+            except Exception as e:
+                error_msg = f"Python execution error: {e}"
+                FreeCAD.Console.PrintError(f"EXEC ERROR: {error_msg}\n")
+                FreeCAD.Console.PrintError(f"EXEC TRACEBACK: {traceback.format_exc()}\n")
+                return {"error": error_msg}
+        
+        # Queue task for GUI thread execution
+        gui_task_queue.put(execute_task)
+        
+        # Wait for result with timeout
+        timeout_seconds = 30  # Allow longer for complex operations
+        start_time = time.time()
+        
+        while time.time() - start_time < timeout_seconds:
+            try:
+                result = gui_response_queue.get_nowait()
+                if isinstance(result, dict):
+                    if "error" in result:
+                        return result["error"]
+                    elif "success" in result:
+                        return result["result"]
+                    else:
+                        return str(result)
+                else:
+                    return str(result)
+            except queue.Empty:
+                time.sleep(0.05)  # 50ms polling interval
+                continue
+        
+        return "Execution timeout - GUI thread may be busy or code is taking too long"
+
     # GUI Control Tools
     def _run_command(self, args: Dict[str, Any]) -> str:
         """Run a FreeCAD GUI command"""

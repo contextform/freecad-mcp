@@ -15,6 +15,30 @@ from typing import Any
 # Add current directory to path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+# Initialize debugging infrastructure (optional - works without it)
+try:
+    from freecad_debug import get_debugger, debug_decorator
+    from freecad_health import get_monitor
+    import logging
+    
+    debugger = get_debugger()
+    monitor = get_monitor()
+    debugger.logger.info("="*80)
+    debugger.logger.info("FreeCAD MCP Bridge Starting with Debug Infrastructure")
+    debugger.logger.info("="*80)
+    DEBUG_ENABLED = True
+except ImportError:
+    # Debugging modules not available - continue without them
+    debugger = None
+    monitor = None
+    DEBUG_ENABLED = False
+    
+    # Create no-op decorator if debug not available
+    def debug_decorator(*args, **kwargs):
+        def decorator(func):
+            return func
+        return decorator
+
 async def main():
     """Run MCP server for FreeCAD integration"""
     try:
@@ -37,6 +61,7 @@ async def main():
         socket_path = "/tmp/freecad_mcp.sock"
         freecad_available = os.path.exists(socket_path)
     
+    @debug_decorator(track_state=False, track_performance=True)
     async def send_to_freecad(tool_name: str, args: dict) -> str:
         """Send command to FreeCAD via socket (cross-platform)"""
         try:
@@ -70,6 +95,22 @@ async def main():
             return response
             
         except Exception as e:
+            # Log the exception if debugger is available
+            if DEBUG_ENABLED and debugger:
+                debugger.log_operation(
+                    operation="send_to_freecad",
+                    parameters={"tool_name": tool_name, "args": args},
+                    error=e
+                )
+                # Check FreeCAD health after socket error
+                if monitor:
+                    status = monitor.perform_health_check()
+                    if not status['is_healthy']:
+                        monitor.log_crash(status, {
+                            "triggered_by": "socket_error",
+                            "tool_name": tool_name,
+                            "args": args
+                        })
             return json.dumps({"error": f"Socket communication error: {e}"})
     
     async def handle_selection_workflow(tool_name: str, original_args: dict, selection_request: dict) -> str:
@@ -379,21 +420,70 @@ async def main():
                 text=f"Unknown tool: {name}"
             )]
 
+    # Optional: Start health monitoring if debugging enabled
+    async def health_check_loop():
+        """Periodic health check for FreeCAD"""
+        if not DEBUG_ENABLED or not monitor:
+            return
+            
+        while True:
+            try:
+                status = monitor.perform_health_check()
+                if not status['is_healthy']:
+                    debugger.logger.error("FreeCAD health check FAILED!")
+                    monitor.log_crash(status)
+                await asyncio.sleep(30)  # Check every 30 seconds
+            except Exception as e:
+                if debugger:
+                    debugger.logger.error(f"Health check error: {e}")
+                await asyncio.sleep(30)
+    
+    # Start health monitoring in background if enabled
+    if DEBUG_ENABLED and monitor:
+        health_task = asyncio.create_task(health_check_loop())
+    
     # Run the server
     import mcp.server.stdio
-    async with mcp.server.stdio.stdio_server() as (read_stream, write_stream):
-        await server.run(
-            read_stream,
-            write_stream,
-            InitializationOptions(
-                server_name="freecad",
-                server_version="2.0.0",
-                capabilities=server.get_capabilities(
-                    notification_options=NotificationOptions(),
-                    experimental_capabilities={},
+    
+    try:
+        async with mcp.server.stdio.stdio_server() as (read_stream, write_stream):
+            await server.run(
+                read_stream,
+                write_stream,
+                InitializationOptions(
+                    server_name="freecad",
+                    server_version="2.0.0",
+                    capabilities=server.get_capabilities(
+                        notification_options=NotificationOptions(),
+                        experimental_capabilities={},
+                    ),
                 ),
-            ),
-        )
+            )
+    finally:
+        # Export debug info on shutdown if debugging enabled
+        if DEBUG_ENABLED and debugger:
+            debugger.logger.info("="*80)
+            debugger.logger.info("MCP Bridge shutting down - exporting debug info")
+            debugger.logger.info("="*80)
+            
+            try:
+                # Performance report
+                perf_report = debugger.get_performance_report()
+                debugger.logger.info(f"\n{perf_report}")
+                
+                # Export debug package
+                debug_pkg = debugger.export_debug_package()
+                debugger.logger.info(f"Debug package: {debug_pkg}")
+                
+                # Export crash report if there were crashes
+                if monitor and monitor.crash_history:
+                    crash_report = monitor.export_crash_report()
+                    debugger.logger.info(f"Crash report: {crash_report}")
+                    stats = monitor.get_crash_statistics()
+                    debugger.logger.info(f"Crash statistics: {stats}")
+            except Exception as e:
+                if debugger:
+                    debugger.logger.error(f"Error during shutdown export: {e}")
 
 if __name__ == "__main__":
     asyncio.run(main())
