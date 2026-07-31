@@ -45,7 +45,7 @@ class GlobalAIService:
             from socket_server import FreeCADSocketServer
             self.socket_server = FreeCADSocketServer()
             if self.socket_server.start_server():
-                FreeCAD.__ai_socket_server = self.socket_server
+                FreeCAD._ai_socket_server = self.socket_server
                 FreeCAD.Console.PrintMessage("✅ AI Socket Server started - Claude Desktop ready\n")
             else:
                 FreeCAD.Console.PrintError("❌ Failed to start AI socket server\n")
@@ -59,13 +59,13 @@ class GlobalAIService:
             from event_observer import FreeCADEventObserver
             self.event_observer = FreeCADEventObserver()
             self.event_observer.start()
-            FreeCAD.__ai_observer = self.event_observer
+            FreeCAD._ai_observer = self.event_observer
             FreeCAD.Console.PrintMessage("✅ AI Event Observer started - Learning enabled\n")
         except Exception as e:
             FreeCAD.Console.PrintError(f"❌ Event observer error: {e}\n")
             
         self.is_running = True
-        FreeCAD.__ai_global_service = self
+        FreeCAD._ai_global_service = self
         FreeCAD.Console.PrintMessage("🎯 AI Copilot Service running - Available from ALL workbenches!\n")
         return True
         
@@ -86,12 +86,12 @@ class GlobalAIService:
         self.is_running = False
         
         # Clean up global references
-        if hasattr(FreeCAD, '__ai_socket_server'):
-            delattr(FreeCAD, '__ai_socket_server')
-        if hasattr(FreeCAD, '__ai_observer'):
-            delattr(FreeCAD, '__ai_observer')
-        if hasattr(FreeCAD, '__ai_global_service'):
-            delattr(FreeCAD, '__ai_global_service')
+        if hasattr(FreeCAD, '_ai_socket_server'):
+            delattr(FreeCAD, '_ai_socket_server')
+        if hasattr(FreeCAD, '_ai_observer'):
+            delattr(FreeCAD, '_ai_observer')
+        if hasattr(FreeCAD, '_ai_global_service'):
+            delattr(FreeCAD, '_ai_global_service')
             
         FreeCAD.Console.PrintMessage("✅ AI Copilot Service stopped\n")
 
@@ -100,7 +100,7 @@ class GlobalAIService:
 # ============================================================================
 try:
     # Initialize immediately after class definition
-    if not hasattr(FreeCAD, '__ai_global_service'):
+    if not hasattr(FreeCAD, '_ai_global_service'):
         service = GlobalAIService()
         if service.start():
             FreeCAD.Console.PrintMessage("🚀 FreeCAD AI Copilot ready! Works from any workbench.\n")
@@ -148,8 +148,8 @@ class AICopilotWorkbench(FreeCADGui.Workbench):
             FreeCAD.Console.PrintError(f"Failed to setup AI management: {e}\n")
             
         # Service status check
-        if hasattr(FreeCAD, '__ai_global_service'):
-            service = FreeCAD.__ai_global_service
+        if hasattr(FreeCAD, '_ai_global_service'):
+            service = FreeCAD._ai_global_service
             if service.is_running:
                 FreeCAD.Console.PrintMessage("✅ Global AI Service is running\n")
             else:
@@ -162,8 +162,8 @@ class AICopilotWorkbench(FreeCADGui.Workbench):
         FreeCAD.Console.PrintMessage("AI Copilot management workbench activated\n")
         
         # Show service status
-        if hasattr(FreeCAD, '__ai_global_service'):
-            service = FreeCAD.__ai_global_service
+        if hasattr(FreeCAD, '_ai_global_service'):
+            service = FreeCAD._ai_global_service
             FreeCAD.Console.PrintMessage(f"AI Service Status: {'Running' if service.is_running else 'Stopped'}\n")
             
     def Deactivated(self):
@@ -186,8 +186,8 @@ class AICopilotWorkbench(FreeCADGui.Workbench):
         # Service Status Command
         class AI_ServiceStatus:
             def Activated(self):
-                if hasattr(FreeCAD, '__ai_global_service'):
-                    service = FreeCAD.__ai_global_service
+                if hasattr(FreeCAD, '_ai_global_service'):
+                    service = FreeCAD._ai_global_service
                     status = "🟢 RUNNING" if service.is_running else "🔴 STOPPED"
                     FreeCAD.Console.PrintMessage(f"\n=== AI Copilot Service Status ===\n")
                     FreeCAD.Console.PrintMessage(f"Status: {status}\n")
@@ -208,8 +208,8 @@ class AICopilotWorkbench(FreeCADGui.Workbench):
                     FreeCAD.Console.PrintMessage("🔄 Restarting AI Copilot Service...\n")
                     
                     # Stop existing service
-                    if hasattr(FreeCAD, '__ai_global_service'):
-                        service = FreeCAD.__ai_global_service
+                    if hasattr(FreeCAD, '_ai_global_service'):
+                        service = FreeCAD._ai_global_service
                         service.stop()
                     
                     # Start new service
