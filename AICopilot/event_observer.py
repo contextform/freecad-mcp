@@ -3,7 +3,7 @@
 
 import FreeCAD
 import FreeCADGui
-from PySide2 import QtCore
+from PySide import QtCore
 from datetime import datetime
 from collections import deque
 import json
