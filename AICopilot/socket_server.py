@@ -2237,68 +2237,70 @@ class FreeCADSocketServer:
         """Execute Python code in FreeCAD context with enhanced safety and logging"""
         import traceback
         import time
-        
-        try:
-            code = args.get('code', '')
-            timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
-            
-            FreeCAD.Console.PrintMessage(f"[{timestamp}] EXEC START: {repr(code[:100])}...\n")
-            
-            # Enhanced pre-flight safety checks
-            if 'newDocument' in code:
-                FreeCAD.Console.PrintMessage("DETECTED: Document creation operation\n")
-                try:
-                    # Comprehensive state check
-                    version = FreeCAD.Version()
-                    docs = FreeCAD.listDocuments()
-                    active = FreeCAD.ActiveDocument
-                    
-                    FreeCAD.Console.PrintMessage(f"Pre-flight: Version={version}, Docs={list(docs.keys())}, Active={active}\n")
-                    
-                    # Test memory allocation
-                    test_list = list(range(1000))  # Small memory test
-                    FreeCAD.Console.PrintMessage("Pre-flight: Memory test passed\n")
-                    
-                except Exception as e:
-                    FreeCAD.Console.PrintError(f"Pre-flight FAILED: {e}\n")
-                    return f"FreeCAD not ready for document operations: {e}"
-            
-            # Create enhanced execution context
-            exec_context = {
-                'FreeCAD': FreeCAD,
-                'FreeCADGui': FreeCADGui,
-                'doc': FreeCAD.ActiveDocument,
-                'print': lambda *args: FreeCAD.Console.PrintMessage('CODE: ' + ' '.join(str(arg) for arg in args) + '\n')
-            }
-            
-            # Execute with detailed logging
-            FreeCAD.Console.PrintMessage("EXEC: Starting code execution...\n")
-            
+
+        def task():
             try:
-                exec(code, exec_context)
-                FreeCAD.Console.PrintMessage("EXEC: Code completed successfully\n")
-            except Exception as exec_error:
-                FreeCAD.Console.PrintError(f"EXEC: Code execution failed: {exec_error}\n")
-                FreeCAD.Console.PrintError(f"EXEC: Traceback: {traceback.format_exc()}\n")
-                raise exec_error
-            
-            # Return result if available
-            if 'result' in exec_context:
-                result = str(exec_context['result'])
-                FreeCAD.Console.PrintMessage(f"EXEC: Result: {result}\n")
-                return result
-            else:
-                FreeCAD.Console.PrintMessage("EXEC: No explicit result, returning success\n")
-                return "Code executed successfully"
-                
-        except Exception as e:
-            error_msg = f"Python execution error: {e}"
-            traceback_msg = traceback.format_exc()
-            
-            FreeCAD.Console.PrintError(f"EXEC ERROR: {error_msg}\n")
-            FreeCAD.Console.PrintError(f"EXEC TRACEBACK: {traceback_msg}\n")
-            
-            return error_msg
+                code = args.get('code', '')
+                timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+
+                FreeCAD.Console.PrintMessage(f"[{timestamp}] EXEC START: {repr(code[:100])}...\n")
+
+                # Enhanced pre-flight safety checks
+                if 'newDocument' in code:
+                    FreeCAD.Console.PrintMessage("DETECTED: Document creation operation\n")
+                    try:
+                        # Comprehensive state check
+                        version = FreeCAD.Version()
+                        docs = FreeCAD.listDocuments()
+                        active = FreeCAD.ActiveDocument
+
+                        FreeCAD.Console.PrintMessage(f"Pre-flight: Version={version}, Docs={list(docs.keys())}, Active={active}\n")
+
+                        # Test memory allocation
+                        test_list = list(range(1000))  # Small memory test
+                        FreeCAD.Console.PrintMessage("Pre-flight: Memory test passed\n")
+
+                    except Exception as e:
+                        FreeCAD.Console.PrintError(f"Pre-flight FAILED: {e}\n")
+                        return f"FreeCAD not ready for document operations: {e}"
+
+                # Create enhanced execution context
+                exec_context = {
+                    'FreeCAD': FreeCAD,
+                    'FreeCADGui': FreeCADGui,
+                    'doc': FreeCAD.ActiveDocument,
+                    'print': lambda *args: FreeCAD.Console.PrintMessage('CODE: ' + ' '.join(str(arg) for arg in args) + '\n')
+                }
+
+                # Execute with detailed logging
+                FreeCAD.Console.PrintMessage("EXEC: Starting code execution...\n")
+
+                try:
+                    exec(code, exec_context)
+                    FreeCAD.Console.PrintMessage("EXEC: Code completed successfully\n")
+                except Exception as exec_error:
+                    FreeCAD.Console.PrintError(f"EXEC: Code execution failed: {exec_error}\n")
+                    FreeCAD.Console.PrintError(f"EXEC: Traceback: {traceback.format_exc()}\n")
+                    raise exec_error
+
+                # Return result if available
+                if 'result' in exec_context:
+                    result = str(exec_context['result'])
+                    FreeCAD.Console.PrintMessage(f"EXEC: Result: {result}\n")
+                    return result
+                else:
+                    FreeCAD.Console.PrintMessage("EXEC: No explicit result, returning success\n")
+                    return "Code executed successfully"
+
+            except Exception as e:
+                error_msg = f"Python execution error: {e}"
+                traceback_msg = traceback.format_exc()
+
+                FreeCAD.Console.PrintError(f"EXEC ERROR: {error_msg}\n")
+                FreeCAD.Console.PrintError(f"EXEC TRACEBACK: {traceback_msg}\n")
+
+                return error_msg
+        return self._run_on_gui_thread(task, timeout=15.0)
             
     # GUI Control Tools
     def _run_command(self, args: Dict[str, Any]) -> str:
