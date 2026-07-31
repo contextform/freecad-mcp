@@ -464,334 +464,370 @@ class FreeCADSocketServer:
             return self._continue_selection(args)
         else:
             return f"Unknown tool: {tool_name}"
-            
+
+    def _run_on_gui_thread(self, fn, timeout: float = 5.0) -> str:
+        """Run fn() on FreeCAD's Qt main thread via gui_task_queue and return its result.
+
+        Required for anything touching FreeCAD.ActiveDocument or FreeCADGui from this
+        (non-main) socket-handling thread -- calling FreeCAD/Qt APIs off the main thread
+        can crash the application. Mirrors the pattern already used by the GUI-safe view
+        operations (see _create_document_gui_safe below).
+        """
+        gui_task_queue.put(fn)
+        try:
+            return gui_response_queue.get(timeout=timeout)
+        except queue.Empty:
+            return "Timeout waiting for GUI thread"
+
     def _create_box(self, args: Dict[str, Any]) -> str:
         """Create a box with specified dimensions"""
-        try:
-            length = args.get('length', 10)
-            width = args.get('width', 10)  
-            height = args.get('height', 10)
-            x = args.get('x', 0)
-            y = args.get('y', 0)
-            z = args.get('z', 0)
-            
-            # Create document if needed
-            doc = FreeCAD.ActiveDocument or FreeCAD.newDocument()
-            
-            # Create box
-            box = doc.addObject("Part::Box", "Box")
-            box.Length = length
-            box.Width = width
-            box.Height = height
-            box.Placement.Base = FreeCAD.Vector(x, y, z)
-            
-            # Recompute and fit view
-            doc.recompute()
-            if FreeCADGui.ActiveDocument:
-                FreeCADGui.SendMsgToActiveView("ViewFit")
-            
-            return f"Created box: {box.Name} ({length}x{width}x{height}mm) at ({x},{y},{z})"
-            
-        except Exception as e:
-            return f"Error creating box: {e}"
-            
+        def task():
+            try:
+                length = args.get('length', 10)
+                width = args.get('width', 10)
+                height = args.get('height', 10)
+                x = args.get('x', 0)
+                y = args.get('y', 0)
+                z = args.get('z', 0)
+
+                # Create document if needed
+                doc = FreeCAD.ActiveDocument or FreeCAD.newDocument()
+
+                # Create box
+                box = doc.addObject("Part::Box", "Box")
+                box.Length = length
+                box.Width = width
+                box.Height = height
+                box.Placement.Base = FreeCAD.Vector(x, y, z)
+
+                # Recompute and fit view
+                doc.recompute()
+                if FreeCADGui.ActiveDocument:
+                    FreeCADGui.SendMsgToActiveView("ViewFit")
+
+                return f"Created box: {box.Name} ({length}x{width}x{height}mm) at ({x},{y},{z})"
+
+            except Exception as e:
+                return f"Error creating box: {e}"
+        return self._run_on_gui_thread(task)
+
     def _create_cylinder(self, args: Dict[str, Any]) -> str:
         """Create a cylinder with specified dimensions"""
-        try:
-            radius = args.get('radius', 5)
-            height = args.get('height', 10)
-            x = args.get('x', 0)
-            y = args.get('y', 0)
-            z = args.get('z', 0)
-            
-            doc = FreeCAD.ActiveDocument or FreeCAD.newDocument()
-            
-            cylinder = doc.addObject("Part::Cylinder", "Cylinder")
-            cylinder.Radius = radius
-            cylinder.Height = height
-            cylinder.Placement.Base = FreeCAD.Vector(x, y, z)
-            
-            doc.recompute()
-            if FreeCADGui.ActiveDocument:
-                FreeCADGui.SendMsgToActiveView("ViewFit")
-            
-            return f"Created cylinder: {cylinder.Name} (R{radius}, H{height}) at ({x},{y},{z})"
-            
-        except Exception as e:
-            return f"Error creating cylinder: {e}"
+        def task():
+            try:
+                radius = args.get('radius', 5)
+                height = args.get('height', 10)
+                x = args.get('x', 0)
+                y = args.get('y', 0)
+                z = args.get('z', 0)
+
+                doc = FreeCAD.ActiveDocument or FreeCAD.newDocument()
+
+                cylinder = doc.addObject("Part::Cylinder", "Cylinder")
+                cylinder.Radius = radius
+                cylinder.Height = height
+                cylinder.Placement.Base = FreeCAD.Vector(x, y, z)
+
+                doc.recompute()
+                if FreeCADGui.ActiveDocument:
+                    FreeCADGui.SendMsgToActiveView("ViewFit")
+
+                return f"Created cylinder: {cylinder.Name} (R{radius}, H{height}) at ({x},{y},{z})"
+
+            except Exception as e:
+                return f"Error creating cylinder: {e}"
+        return self._run_on_gui_thread(task)
             
     def _create_sphere(self, args: Dict[str, Any]) -> str:
         """Create a sphere with specified radius"""
-        try:
-            radius = args.get('radius', 5)
-            x = args.get('x', 0)
-            y = args.get('y', 0)
-            z = args.get('z', 0)
-            
-            doc = FreeCAD.ActiveDocument or FreeCAD.newDocument()
-            
-            sphere = doc.addObject("Part::Sphere", "Sphere")
-            sphere.Radius = radius
-            sphere.Placement.Base = FreeCAD.Vector(x, y, z)
-            
-            doc.recompute()
-            if FreeCADGui.ActiveDocument:
-                FreeCADGui.SendMsgToActiveView("ViewFit")
-            
-            return f"Created sphere: {sphere.Name} (R{radius}) at ({x},{y},{z})"
-            
-        except Exception as e:
-            return f"Error creating sphere: {e}"
-            
+        def task():
+            try:
+                radius = args.get('radius', 5)
+                x = args.get('x', 0)
+                y = args.get('y', 0)
+                z = args.get('z', 0)
+
+                doc = FreeCAD.ActiveDocument or FreeCAD.newDocument()
+
+                sphere = doc.addObject("Part::Sphere", "Sphere")
+                sphere.Radius = radius
+                sphere.Placement.Base = FreeCAD.Vector(x, y, z)
+
+                doc.recompute()
+                if FreeCADGui.ActiveDocument:
+                    FreeCADGui.SendMsgToActiveView("ViewFit")
+
+                return f"Created sphere: {sphere.Name} (R{radius}) at ({x},{y},{z})"
+
+            except Exception as e:
+                return f"Error creating sphere: {e}"
+        return self._run_on_gui_thread(task)
+
     def _create_cone(self, args: Dict[str, Any]) -> str:
         """Create a cone with specified radii and height"""
-        try:
-            radius1 = args.get('radius1', 5)  # Bottom radius
-            radius2 = args.get('radius2', 0)  # Top radius
-            height = args.get('height', 10)
-            x = args.get('x', 0)
-            y = args.get('y', 0)
-            z = args.get('z', 0)
-            
-            doc = FreeCAD.ActiveDocument or FreeCAD.newDocument()
-            
-            cone = doc.addObject("Part::Cone", "Cone")
-            cone.Radius1 = radius1
-            cone.Radius2 = radius2
-            cone.Height = height
-            cone.Placement.Base = FreeCAD.Vector(x, y, z)
-            
-            doc.recompute()
-            if FreeCADGui.ActiveDocument:
-                FreeCADGui.SendMsgToActiveView("ViewFit")
-            
-            return f"Created cone: {cone.Name} (R1{radius1}, R2{radius2}, H{height}) at ({x},{y},{z})"
-            
-        except Exception as e:
-            return f"Error creating cone: {e}"
-            
+        def task():
+            try:
+                radius1 = args.get('radius1', 5)  # Bottom radius
+                radius2 = args.get('radius2', 0)  # Top radius
+                height = args.get('height', 10)
+                x = args.get('x', 0)
+                y = args.get('y', 0)
+                z = args.get('z', 0)
+
+                doc = FreeCAD.ActiveDocument or FreeCAD.newDocument()
+
+                cone = doc.addObject("Part::Cone", "Cone")
+                cone.Radius1 = radius1
+                cone.Radius2 = radius2
+                cone.Height = height
+                cone.Placement.Base = FreeCAD.Vector(x, y, z)
+
+                doc.recompute()
+                if FreeCADGui.ActiveDocument:
+                    FreeCADGui.SendMsgToActiveView("ViewFit")
+
+                return f"Created cone: {cone.Name} (R1{radius1}, R2{radius2}, H{height}) at ({x},{y},{z})"
+
+            except Exception as e:
+                return f"Error creating cone: {e}"
+        return self._run_on_gui_thread(task)
+
     def _create_torus(self, args: Dict[str, Any]) -> str:
         """Create a torus (donut shape) with specified radii"""
-        try:
-            radius1 = args.get('radius1', 10)  # Major radius
-            radius2 = args.get('radius2', 3)   # Minor radius
-            x = args.get('x', 0)
-            y = args.get('y', 0)
-            z = args.get('z', 0)
-            
-            doc = FreeCAD.ActiveDocument or FreeCAD.newDocument()
-            
-            torus = doc.addObject("Part::Torus", "Torus")
-            torus.Radius1 = radius1
-            torus.Radius2 = radius2
-            torus.Placement.Base = FreeCAD.Vector(x, y, z)
-            
-            doc.recompute()
-            if FreeCADGui.ActiveDocument:
-                FreeCADGui.SendMsgToActiveView("ViewFit")
-            
-            return f"Created torus: {torus.Name} (R1{radius1}, R2{radius2}) at ({x},{y},{z})"
-            
-        except Exception as e:
-            return f"Error creating torus: {e}"
-            
+        def task():
+            try:
+                radius1 = args.get('radius1', 10)  # Major radius
+                radius2 = args.get('radius2', 3)   # Minor radius
+                x = args.get('x', 0)
+                y = args.get('y', 0)
+                z = args.get('z', 0)
+
+                doc = FreeCAD.ActiveDocument or FreeCAD.newDocument()
+
+                torus = doc.addObject("Part::Torus", "Torus")
+                torus.Radius1 = radius1
+                torus.Radius2 = radius2
+                torus.Placement.Base = FreeCAD.Vector(x, y, z)
+
+                doc.recompute()
+                if FreeCADGui.ActiveDocument:
+                    FreeCADGui.SendMsgToActiveView("ViewFit")
+
+                return f"Created torus: {torus.Name} (R1{radius1}, R2{radius2}) at ({x},{y},{z})"
+
+            except Exception as e:
+                return f"Error creating torus: {e}"
+        return self._run_on_gui_thread(task)
+
     def _create_wedge(self, args: Dict[str, Any]) -> str:
         """Create a wedge (triangular prism) with specified dimensions"""
-        try:
-            xmin = args.get('xmin', 0)
-            ymin = args.get('ymin', 0)
-            zmin = args.get('zmin', 0)
-            x2min = args.get('x2min', 2)
-            x2max = args.get('x2max', 8)
-            xmax = args.get('xmax', 10)
-            ymax = args.get('ymax', 10)
-            zmax = args.get('zmax', 10)
-            
-            doc = FreeCAD.ActiveDocument or FreeCAD.newDocument()
-            
-            wedge = doc.addObject("Part::Wedge", "Wedge")
-            wedge.Xmin = xmin
-            wedge.Ymin = ymin
-            wedge.Zmin = zmin
-            wedge.X2min = x2min
-            wedge.X2max = x2max
-            wedge.Xmax = xmax
-            wedge.Ymax = ymax
-            wedge.Zmax = zmax
-            
-            doc.recompute()
-            if FreeCADGui.ActiveDocument:
-                FreeCADGui.SendMsgToActiveView("ViewFit")
-            
-            return f"Created wedge: {wedge.Name} ({xmax}x{ymax}x{zmax}) at origin"
-            
-        except Exception as e:
-            return f"Error creating wedge: {e}"
+        def task():
+            try:
+                xmin = args.get('xmin', 0)
+                ymin = args.get('ymin', 0)
+                zmin = args.get('zmin', 0)
+                x2min = args.get('x2min', 2)
+                x2max = args.get('x2max', 8)
+                xmax = args.get('xmax', 10)
+                ymax = args.get('ymax', 10)
+                zmax = args.get('zmax', 10)
+
+                doc = FreeCAD.ActiveDocument or FreeCAD.newDocument()
+
+                wedge = doc.addObject("Part::Wedge", "Wedge")
+                wedge.Xmin = xmin
+                wedge.Ymin = ymin
+                wedge.Zmin = zmin
+                wedge.X2min = x2min
+                wedge.X2max = x2max
+                wedge.Xmax = xmax
+                wedge.Ymax = ymax
+                wedge.Zmax = zmax
+
+                doc.recompute()
+                if FreeCADGui.ActiveDocument:
+                    FreeCADGui.SendMsgToActiveView("ViewFit")
+
+                return f"Created wedge: {wedge.Name} ({xmax}x{ymax}x{zmax}) at origin"
+
+            except Exception as e:
+                return f"Error creating wedge: {e}"
+        return self._run_on_gui_thread(task)
             
     # === Boolean Operations ===
     def _fuse_objects(self, args: Dict[str, Any]) -> str:
         """Fuse (union) multiple objects together"""
-        try:
-            objects = args.get('objects', [])
-            name = args.get('name', 'Fusion')
-            
-            if len(objects) < 2:
-                return "Need at least 2 objects to fuse"
-                
-            doc = FreeCAD.ActiveDocument
-            if not doc:
-                return "No active document"
-                
-            # Get object references
-            objs = []
-            for obj_name in objects:
-                obj = doc.getObject(obj_name)
-                if obj:
-                    objs.append(obj)
-                else:
-                    return f"Object not found: {obj_name}"
-                    
-            # Create fusion
-            fusion = doc.addObject("Part::MultiFuse", name)
-            fusion.Shapes = objs
-            doc.recompute()
-            
-            return f"Created fusion: {fusion.Name} from {len(objects)} objects"
-            
-        except Exception as e:
-            return f"Error fusing objects: {e}"
-            
+        def task():
+            try:
+                objects = args.get('objects', [])
+                name = args.get('name', 'Fusion')
+
+                if len(objects) < 2:
+                    return "Need at least 2 objects to fuse"
+
+                doc = FreeCAD.ActiveDocument
+                if not doc:
+                    return "No active document"
+
+                # Get object references
+                objs = []
+                for obj_name in objects:
+                    obj = doc.getObject(obj_name)
+                    if obj:
+                        objs.append(obj)
+                    else:
+                        return f"Object not found: {obj_name}"
+
+                # Create fusion
+                fusion = doc.addObject("Part::MultiFuse", name)
+                fusion.Shapes = objs
+                doc.recompute()
+
+                return f"Created fusion: {fusion.Name} from {len(objects)} objects"
+
+            except Exception as e:
+                return f"Error fusing objects: {e}"
+        return self._run_on_gui_thread(task)
+
     def _cut_objects(self, args: Dict[str, Any]) -> str:
         """Cut (subtract) tools from base object"""
-        try:
-            base = args.get('base', '')
-            tools = args.get('tools', [])
-            name = args.get('name', 'Cut')
-            
-            if not base or not tools:
-                return "Need base object and tool objects"
-                
-            doc = FreeCAD.ActiveDocument
-            if not doc:
-                return "No active document"
-                
-            # Get object references
-            base_obj = doc.getObject(base)
-            if not base_obj:
-                return f"Base object not found: {base}"
-                
-            tool_objs = []
-            for tool_name in tools:
-                tool_obj = doc.getObject(tool_name)
-                if tool_obj:
-                    tool_objs.append(tool_obj)
-                else:
-                    return f"Tool object not found: {tool_name}"
-                    
-            # Create cut
-            cut = doc.addObject("Part::Cut", name)
-            cut.Base = base_obj
-            cut.Tool = tool_objs[0] if len(tool_objs) == 1 else tool_objs
-            doc.recompute()
-            
-            return f"Created cut: {cut.Name} from {base} minus {len(tools)} tools"
-            
-        except Exception as e:
-            return f"Error cutting objects: {e}"
-            
+        def task():
+            try:
+                base = args.get('base', '')
+                tools = args.get('tools', [])
+                name = args.get('name', 'Cut')
+
+                if not base or not tools:
+                    return "Need base object and tool objects"
+
+                doc = FreeCAD.ActiveDocument
+                if not doc:
+                    return "No active document"
+
+                # Get object references
+                base_obj = doc.getObject(base)
+                if not base_obj:
+                    return f"Base object not found: {base}"
+
+                tool_objs = []
+                for tool_name in tools:
+                    tool_obj = doc.getObject(tool_name)
+                    if tool_obj:
+                        tool_objs.append(tool_obj)
+                    else:
+                        return f"Tool object not found: {tool_name}"
+
+                # Create cut
+                cut = doc.addObject("Part::Cut", name)
+                cut.Base = base_obj
+                cut.Tool = tool_objs[0] if len(tool_objs) == 1 else tool_objs
+                doc.recompute()
+
+                return f"Created cut: {cut.Name} from {base} minus {len(tools)} tools"
+
+            except Exception as e:
+                return f"Error cutting objects: {e}"
+        return self._run_on_gui_thread(task)
+
     def _common_objects(self, args: Dict[str, Any]) -> str:
         """Find intersection of multiple objects"""
-        try:
-            objects = args.get('objects', [])
-            name = args.get('name', 'Common')
-            
-            if len(objects) < 2:
-                return "Need at least 2 objects for intersection"
-                
-            doc = FreeCAD.ActiveDocument
-            if not doc:
-                return "No active document"
-                
-            # Get object references
-            objs = []
-            for obj_name in objects:
-                obj = doc.getObject(obj_name)
-                if obj:
-                    objs.append(obj)
-                else:
-                    return f"Object not found: {obj_name}"
-                    
-            # Create common
-            common = doc.addObject("Part::MultiCommon", name)
-            common.Shapes = objs
-            doc.recompute()
-            
-            return f"Created intersection: {common.Name} from {len(objects)} objects"
-            
-        except Exception as e:
-            return f"Error finding intersection: {e}"
-    
+        def task():
+            try:
+                objects = args.get('objects', [])
+                name = args.get('name', 'Common')
+
+                if len(objects) < 2:
+                    return "Need at least 2 objects for intersection"
+
+                doc = FreeCAD.ActiveDocument
+                if not doc:
+                    return "No active document"
+
+                # Get object references
+                objs = []
+                for obj_name in objects:
+                    obj = doc.getObject(obj_name)
+                    if obj:
+                        objs.append(obj)
+                    else:
+                        return f"Object not found: {obj_name}"
+
+                # Create common
+                common = doc.addObject("Part::MultiCommon", name)
+                common.Shapes = objs
+                doc.recompute()
+
+                return f"Created intersection: {common.Name} from {len(objects)} objects"
+
+            except Exception as e:
+                return f"Error finding intersection: {e}"
+        return self._run_on_gui_thread(task)
+
     # === Transformation Tools ===
     def _move_object(self, args: Dict[str, Any]) -> str:
         """Move an object to new position"""
-        try:
-            object_name = args.get('object_name', '')
-            x = args.get('x', 0)
-            y = args.get('y', 0)
-            z = args.get('z', 0)
-            
-            doc = FreeCAD.ActiveDocument
-            if not doc:
-                return "No active document"
-                
-            obj = doc.getObject(object_name)
-            if not obj:
-                return f"Object not found: {object_name}"
-                
-            # Move object
-            obj.Placement.Base = FreeCAD.Vector(
-                obj.Placement.Base.x + x,
-                obj.Placement.Base.y + y,
-                obj.Placement.Base.z + z
-            )
-            doc.recompute()
-            
-            return f"Moved {object_name} by ({x}, {y}, {z})"
-            
-        except Exception as e:
-            return f"Error moving object: {e}"
-            
+        def task():
+            try:
+                object_name = args.get('object_name', '')
+                x = args.get('x', 0)
+                y = args.get('y', 0)
+                z = args.get('z', 0)
+
+                doc = FreeCAD.ActiveDocument
+                if not doc:
+                    return "No active document"
+
+                obj = doc.getObject(object_name)
+                if not obj:
+                    return f"Object not found: {object_name}"
+
+                # Move object
+                obj.Placement.Base = FreeCAD.Vector(
+                    obj.Placement.Base.x + x,
+                    obj.Placement.Base.y + y,
+                    obj.Placement.Base.z + z
+                )
+                doc.recompute()
+
+                return f"Moved {object_name} by ({x}, {y}, {z})"
+
+            except Exception as e:
+                return f"Error moving object: {e}"
+        return self._run_on_gui_thread(task)
+
     def _rotate_object(self, args: Dict[str, Any]) -> str:
         """Rotate an object around axis"""
-        try:
-            object_name = args.get('object_name', '')
-            axis = args.get('axis', 'z')
-            angle = args.get('angle', 90)
-            
-            doc = FreeCAD.ActiveDocument
-            if not doc:
-                return "No active document"
-                
-            obj = doc.getObject(object_name)
-            if not obj:
-                return f"Object not found: {object_name}"
-                
-            # Set rotation axis
-            axis_vector = FreeCAD.Vector(0, 0, 1)  # default Z
-            if axis.lower() == 'x':
-                axis_vector = FreeCAD.Vector(1, 0, 0)
-            elif axis.lower() == 'y':
-                axis_vector = FreeCAD.Vector(0, 1, 0)
-                
-            # Rotate object
-            rotation = FreeCAD.Rotation(axis_vector, angle)
-            obj.Placement.Rotation = obj.Placement.Rotation.multiply(rotation)
-            doc.recompute()
-            
-            return f"Rotated {object_name} by {angle}° around {axis.upper()}-axis"
-            
-        except Exception as e:
-            return f"Error rotating object: {e}"
+        def task():
+            try:
+                object_name = args.get('object_name', '')
+                axis = args.get('axis', 'z')
+                angle = args.get('angle', 90)
+
+                doc = FreeCAD.ActiveDocument
+                if not doc:
+                    return "No active document"
+
+                obj = doc.getObject(object_name)
+                if not obj:
+                    return f"Object not found: {object_name}"
+
+                # Set rotation axis
+                axis_vector = FreeCAD.Vector(0, 0, 1)  # default Z
+                if axis.lower() == 'x':
+                    axis_vector = FreeCAD.Vector(1, 0, 0)
+                elif axis.lower() == 'y':
+                    axis_vector = FreeCAD.Vector(0, 1, 0)
+
+                # Rotate object
+                rotation = FreeCAD.Rotation(axis_vector, angle)
+                obj.Placement.Rotation = obj.Placement.Rotation.multiply(rotation)
+                doc.recompute()
+
+                return f"Rotated {object_name} by {angle}° around {axis.upper()}-axis"
+
+            except Exception as e:
+                return f"Error rotating object: {e}"
+        return self._run_on_gui_thread(task)
             
     def _copy_object(self, args: Dict[str, Any]) -> str:
         """Create a copy of an object"""
@@ -1417,73 +1453,77 @@ class FreeCADSocketServer:
     # === Advanced Shape Creation Tools ===
     def _loft_profiles(self, args: Dict[str, Any]) -> str:
         """Loft between multiple sketches to create complex shapes"""
-        try:
-            sketches = args.get('sketches', [])
-            ruled = args.get('ruled', False)
-            closed = args.get('closed', True)
-            name = args.get('name', 'Loft')
-            
-            if len(sketches) < 2:
-                return "Need at least 2 sketches for lofting"
-                
-            doc = FreeCAD.ActiveDocument
-            if not doc:
-                return "No active document"
-                
-            # Get sketch objects
-            sketch_objs = []
-            for sketch_name in sketches:
-                sketch = doc.getObject(sketch_name)
-                if sketch:
-                    sketch_objs.append(sketch)
-                else:
-                    return f"Sketch not found: {sketch_name}"
-                    
-            # Create loft
-            loft = doc.addObject("Part::Loft", name)
-            loft.Sections = sketch_objs
-            loft.Solid = closed
-            loft.Ruled = ruled
-            
-            doc.recompute()
-            
-            return f"Created loft: {loft.Name} through {len(sketches)} profiles"
-            
-        except Exception as e:
-            return f"Error creating loft: {e}"
-            
+        def task():
+            try:
+                sketches = args.get('sketches', [])
+                ruled = args.get('ruled', False)
+                closed = args.get('closed', True)
+                name = args.get('name', 'Loft')
+
+                if len(sketches) < 2:
+                    return "Need at least 2 sketches for lofting"
+
+                doc = FreeCAD.ActiveDocument
+                if not doc:
+                    return "No active document"
+
+                # Get sketch objects
+                sketch_objs = []
+                for sketch_name in sketches:
+                    sketch = doc.getObject(sketch_name)
+                    if sketch:
+                        sketch_objs.append(sketch)
+                    else:
+                        return f"Sketch not found: {sketch_name}"
+
+                # Create loft
+                loft = doc.addObject("Part::Loft", name)
+                loft.Sections = sketch_objs
+                loft.Solid = closed
+                loft.Ruled = ruled
+
+                doc.recompute()
+
+                return f"Created loft: {loft.Name} through {len(sketches)} profiles"
+
+            except Exception as e:
+                return f"Error creating loft: {e}"
+        return self._run_on_gui_thread(task)
+
     def _sweep_path(self, args: Dict[str, Any]) -> str:
         """Sweep a profile sketch along a path sketch"""
-        try:
-            profile_sketch = args.get('profile_sketch', '')
-            path_sketch = args.get('path_sketch', '')
-            solid = args.get('solid', True)
-            name = args.get('name', 'Sweep')
-            
-            doc = FreeCAD.ActiveDocument
-            if not doc:
-                return "No active document"
-                
-            profile = doc.getObject(profile_sketch)
-            if not profile:
-                return f"Profile sketch not found: {profile_sketch}"
-                
-            path = doc.getObject(path_sketch)
-            if not path:
-                return f"Path sketch not found: {path_sketch}"
-                
-            # Create sweep
-            sweep = doc.addObject("Part::Sweep", name)
-            sweep.Sections = [profile]
-            sweep.Spine = path
-            sweep.Solid = solid
-            
-            doc.recompute()
-            
-            return f"Created sweep: {sweep.Name} with profile {profile_sketch} along path {path_sketch}"
-            
-        except Exception as e:
-            return f"Error creating sweep: {e}"
+        def task():
+            try:
+                profile_sketch = args.get('profile_sketch', '')
+                path_sketch = args.get('path_sketch', '')
+                solid = args.get('solid', True)
+                name = args.get('name', 'Sweep')
+
+                doc = FreeCAD.ActiveDocument
+                if not doc:
+                    return "No active document"
+
+                profile = doc.getObject(profile_sketch)
+                if not profile:
+                    return f"Profile sketch not found: {profile_sketch}"
+
+                path = doc.getObject(path_sketch)
+                if not path:
+                    return f"Path sketch not found: {path_sketch}"
+
+                # Create sweep
+                sweep = doc.addObject("Part::Sweep", name)
+                sweep.Sections = [profile]
+                sweep.Spine = path
+                sweep.Solid = solid
+
+                doc.recompute()
+
+                return f"Created sweep: {sweep.Name} with profile {profile_sketch} along path {path_sketch}"
+
+            except Exception as e:
+                return f"Error creating sweep: {e}"
+        return self._run_on_gui_thread(task)
     
     # === Manufacturing Features ===        
     def _draft_faces(self, args: Dict[str, Any]) -> str:
@@ -2197,68 +2237,70 @@ class FreeCADSocketServer:
         """Execute Python code in FreeCAD context with enhanced safety and logging"""
         import traceback
         import time
-        
-        try:
-            code = args.get('code', '')
-            timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
-            
-            FreeCAD.Console.PrintMessage(f"[{timestamp}] EXEC START: {repr(code[:100])}...\n")
-            
-            # Enhanced pre-flight safety checks
-            if 'newDocument' in code:
-                FreeCAD.Console.PrintMessage("DETECTED: Document creation operation\n")
-                try:
-                    # Comprehensive state check
-                    version = FreeCAD.Version()
-                    docs = FreeCAD.listDocuments()
-                    active = FreeCAD.ActiveDocument
-                    
-                    FreeCAD.Console.PrintMessage(f"Pre-flight: Version={version}, Docs={list(docs.keys())}, Active={active}\n")
-                    
-                    # Test memory allocation
-                    test_list = list(range(1000))  # Small memory test
-                    FreeCAD.Console.PrintMessage("Pre-flight: Memory test passed\n")
-                    
-                except Exception as e:
-                    FreeCAD.Console.PrintError(f"Pre-flight FAILED: {e}\n")
-                    return f"FreeCAD not ready for document operations: {e}"
-            
-            # Create enhanced execution context
-            exec_context = {
-                'FreeCAD': FreeCAD,
-                'FreeCADGui': FreeCADGui,
-                'doc': FreeCAD.ActiveDocument,
-                'print': lambda *args: FreeCAD.Console.PrintMessage('CODE: ' + ' '.join(str(arg) for arg in args) + '\n')
-            }
-            
-            # Execute with detailed logging
-            FreeCAD.Console.PrintMessage("EXEC: Starting code execution...\n")
-            
+
+        def task():
             try:
-                exec(code, exec_context)
-                FreeCAD.Console.PrintMessage("EXEC: Code completed successfully\n")
-            except Exception as exec_error:
-                FreeCAD.Console.PrintError(f"EXEC: Code execution failed: {exec_error}\n")
-                FreeCAD.Console.PrintError(f"EXEC: Traceback: {traceback.format_exc()}\n")
-                raise exec_error
-            
-            # Return result if available
-            if 'result' in exec_context:
-                result = str(exec_context['result'])
-                FreeCAD.Console.PrintMessage(f"EXEC: Result: {result}\n")
-                return result
-            else:
-                FreeCAD.Console.PrintMessage("EXEC: No explicit result, returning success\n")
-                return "Code executed successfully"
-                
-        except Exception as e:
-            error_msg = f"Python execution error: {e}"
-            traceback_msg = traceback.format_exc()
-            
-            FreeCAD.Console.PrintError(f"EXEC ERROR: {error_msg}\n")
-            FreeCAD.Console.PrintError(f"EXEC TRACEBACK: {traceback_msg}\n")
-            
-            return error_msg
+                code = args.get('code', '')
+                timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+
+                FreeCAD.Console.PrintMessage(f"[{timestamp}] EXEC START: {repr(code[:100])}...\n")
+
+                # Enhanced pre-flight safety checks
+                if 'newDocument' in code:
+                    FreeCAD.Console.PrintMessage("DETECTED: Document creation operation\n")
+                    try:
+                        # Comprehensive state check
+                        version = FreeCAD.Version()
+                        docs = FreeCAD.listDocuments()
+                        active = FreeCAD.ActiveDocument
+
+                        FreeCAD.Console.PrintMessage(f"Pre-flight: Version={version}, Docs={list(docs.keys())}, Active={active}\n")
+
+                        # Test memory allocation
+                        test_list = list(range(1000))  # Small memory test
+                        FreeCAD.Console.PrintMessage("Pre-flight: Memory test passed\n")
+
+                    except Exception as e:
+                        FreeCAD.Console.PrintError(f"Pre-flight FAILED: {e}\n")
+                        return f"FreeCAD not ready for document operations: {e}"
+
+                # Create enhanced execution context
+                exec_context = {
+                    'FreeCAD': FreeCAD,
+                    'FreeCADGui': FreeCADGui,
+                    'doc': FreeCAD.ActiveDocument,
+                    'print': lambda *args: FreeCAD.Console.PrintMessage('CODE: ' + ' '.join(str(arg) for arg in args) + '\n')
+                }
+
+                # Execute with detailed logging
+                FreeCAD.Console.PrintMessage("EXEC: Starting code execution...\n")
+
+                try:
+                    exec(code, exec_context)
+                    FreeCAD.Console.PrintMessage("EXEC: Code completed successfully\n")
+                except Exception as exec_error:
+                    FreeCAD.Console.PrintError(f"EXEC: Code execution failed: {exec_error}\n")
+                    FreeCAD.Console.PrintError(f"EXEC: Traceback: {traceback.format_exc()}\n")
+                    raise exec_error
+
+                # Return result if available
+                if 'result' in exec_context:
+                    result = str(exec_context['result'])
+                    FreeCAD.Console.PrintMessage(f"EXEC: Result: {result}\n")
+                    return result
+                else:
+                    FreeCAD.Console.PrintMessage("EXEC: No explicit result, returning success\n")
+                    return "Code executed successfully"
+
+            except Exception as e:
+                error_msg = f"Python execution error: {e}"
+                traceback_msg = traceback.format_exc()
+
+                FreeCAD.Console.PrintError(f"EXEC ERROR: {error_msg}\n")
+                FreeCAD.Console.PrintError(f"EXEC TRACEBACK: {traceback_msg}\n")
+
+                return error_msg
+        return self._run_on_gui_thread(task, timeout=15.0)
             
     # GUI Control Tools
     def _run_command(self, args: Dict[str, Any]) -> str:
@@ -2730,212 +2772,220 @@ class FreeCADSocketServer:
 
     def _part_scale_object(self, args: Dict[str, Any]) -> str:
         """Scale object by modifying its dimensions directly"""
-        try:
-            object_name = args.get('object_name', '')
-            scale_factor = args.get('scale_factor', 1.5)
-            
-            doc = FreeCAD.ActiveDocument
-            if not doc:
-                return "No active document"
-            
-            obj = doc.getObject(object_name)
-            if not obj:
-                return f"Object {object_name} not found"
-            
-            # Check if this is a parametric object (Box, Cylinder, etc.)
-            if hasattr(obj, 'Length') and hasattr(obj, 'Width') and hasattr(obj, 'Height'):
-                # Box object - scale dimensions directly
-                old_dims = f"{obj.Length.Value}x{obj.Width.Value}x{obj.Height.Value}"
-                obj.Length = obj.Length.Value * scale_factor
-                obj.Width = obj.Width.Value * scale_factor
-                obj.Height = obj.Height.Value * scale_factor
-                new_dims = f"{obj.Length.Value}x{obj.Width.Value}x{obj.Height.Value}"
-                doc.recompute()
-                return f"Scaled {object_name} by factor {scale_factor} ({old_dims}mm → {new_dims}mm)"
-            elif hasattr(obj, 'Radius') and hasattr(obj, 'Height'):
-                # Cylinder/Cone object - scale dimensions directly
-                old_dims = f"R{obj.Radius.Value}xH{obj.Height.Value}"
-                obj.Radius = obj.Radius.Value * scale_factor
-                obj.Height = obj.Height.Value * scale_factor
-                if hasattr(obj, 'Radius2'):  # Cone has second radius
-                    obj.Radius2 = obj.Radius2.Value * scale_factor
-                new_dims = f"R{obj.Radius.Value}xH{obj.Height.Value}"
-                doc.recompute()
-                return f"Scaled {object_name} by factor {scale_factor} ({old_dims}mm → {new_dims}mm)"
-            elif hasattr(obj, 'Radius'):
-                # Sphere object - scale radius directly
-                old_radius = obj.Radius.Value
-                obj.Radius = obj.Radius.Value * scale_factor
-                doc.recompute()
-                return f"Scaled {object_name} by factor {scale_factor} (R{old_radius}mm → R{obj.Radius.Value}mm)"
-            else:
-                # Non-parametric object - create scaled copy using transformation
-                if hasattr(obj, 'Shape'):
-                    import Part
-                    matrix = FreeCAD.Matrix()
-                    matrix.scale(scale_factor, scale_factor, scale_factor)
-                    scaled_shape = obj.Shape.transformGeometry(matrix)
-                    scaled_obj = doc.addObject("Part::Feature", f"{object_name}_scaled")
-                    scaled_obj.Shape = scaled_shape
+        def task():
+            try:
+                object_name = args.get('object_name', '')
+                scale_factor = args.get('scale_factor', 1.5)
+
+                doc = FreeCAD.ActiveDocument
+                if not doc:
+                    return "No active document"
+
+                obj = doc.getObject(object_name)
+                if not obj:
+                    return f"Object {object_name} not found"
+
+                # Check if this is a parametric object (Box, Cylinder, etc.)
+                if hasattr(obj, 'Length') and hasattr(obj, 'Width') and hasattr(obj, 'Height'):
+                    # Box object - scale dimensions directly
+                    old_dims = f"{obj.Length.Value}x{obj.Width.Value}x{obj.Height.Value}"
+                    obj.Length = obj.Length.Value * scale_factor
+                    obj.Width = obj.Width.Value * scale_factor
+                    obj.Height = obj.Height.Value * scale_factor
+                    new_dims = f"{obj.Length.Value}x{obj.Width.Value}x{obj.Height.Value}"
                     doc.recompute()
-                    return f"Created scaled copy: {scaled_obj.Name} (factor {scale_factor})"
+                    return f"Scaled {object_name} by factor {scale_factor} ({old_dims}mm → {new_dims}mm)"
+                elif hasattr(obj, 'Radius') and hasattr(obj, 'Height'):
+                    # Cylinder/Cone object - scale dimensions directly
+                    old_dims = f"R{obj.Radius.Value}xH{obj.Height.Value}"
+                    obj.Radius = obj.Radius.Value * scale_factor
+                    obj.Height = obj.Height.Value * scale_factor
+                    if hasattr(obj, 'Radius2'):  # Cone has second radius
+                        obj.Radius2 = obj.Radius2.Value * scale_factor
+                    new_dims = f"R{obj.Radius.Value}xH{obj.Height.Value}"
+                    doc.recompute()
+                    return f"Scaled {object_name} by factor {scale_factor} ({old_dims}mm → {new_dims}mm)"
+                elif hasattr(obj, 'Radius'):
+                    # Sphere object - scale radius directly
+                    old_radius = obj.Radius.Value
+                    obj.Radius = obj.Radius.Value * scale_factor
+                    doc.recompute()
+                    return f"Scaled {object_name} by factor {scale_factor} (R{old_radius}mm → R{obj.Radius.Value}mm)"
                 else:
-                    return f"Cannot scale {object_name} - not a parametric object"
-                    
-        except Exception as e:
-            return f"Error scaling object: {e}"
+                    # Non-parametric object - create scaled copy using transformation
+                    if hasattr(obj, 'Shape'):
+                        import Part
+                        matrix = FreeCAD.Matrix()
+                        matrix.scale(scale_factor, scale_factor, scale_factor)
+                        scaled_shape = obj.Shape.transformGeometry(matrix)
+                        scaled_obj = doc.addObject("Part::Feature", f"{object_name}_scaled")
+                        scaled_obj.Shape = scaled_shape
+                        doc.recompute()
+                        return f"Created scaled copy: {scaled_obj.Name} (factor {scale_factor})"
+                    else:
+                        return f"Cannot scale {object_name} - not a parametric object"
+
+            except Exception as e:
+                return f"Error scaling object: {e}"
+        return self._run_on_gui_thread(task)
 
     def _part_mirror_object(self, args: Dict[str, Any]) -> str:
         """Mirror object across a plane"""
-        try:
-            object_name = args.get('object_name', '')
-            plane = args.get('plane', 'YZ')
-            name = args.get('name', '')
-            
-            doc = FreeCAD.ActiveDocument
-            if not doc:
-                return "No active document"
-            
-            obj = doc.getObject(object_name)
-            if not obj:
-                return f"Object {object_name} not found"
-            
-            if not hasattr(obj, 'Shape'):
-                return f"Object {object_name} is not a shape object"
-            
-            # Set mirror plane normal and origin based on plane parameter
-            if plane == "YZ":
-                normal = FreeCAD.Vector(1, 0, 0)  # Normal to YZ plane
-                mirror_point = FreeCAD.Vector(0, 0, 0)
-            elif plane == "XZ":
-                normal = FreeCAD.Vector(0, 1, 0)  # Normal to XZ plane
-                mirror_point = FreeCAD.Vector(0, 0, 0)
-            elif plane == "XY":
-                normal = FreeCAD.Vector(0, 0, 1)  # Normal to XY plane
-                mirror_point = FreeCAD.Vector(0, 0, 0)
-            else:
-                return f"Invalid plane '{plane}'. Valid options: XY, XZ, YZ"
-            
-            # Mirror the shape
-            import Part
-            mirrored_shape = obj.Shape.mirror(mirror_point, normal)
-            
-            # Create mirrored object with appropriate name
-            if name:
-                mirrored_obj = doc.addObject("Part::Feature", name)
-            else:
-                mirrored_obj = doc.addObject("Part::Feature", f"{object_name}_mirrored")
-            mirrored_obj.Shape = mirrored_shape
-            
-            doc.recompute()
-            return f"Mirrored {object_name} across {plane} plane at (0,0,0)"
-            
-        except Exception as e:
-            return f"Error mirroring object: {e}"
+        def task():
+            try:
+                object_name = args.get('object_name', '')
+                plane = args.get('plane', 'YZ')
+                name = args.get('name', '')
+
+                doc = FreeCAD.ActiveDocument
+                if not doc:
+                    return "No active document"
+
+                obj = doc.getObject(object_name)
+                if not obj:
+                    return f"Object {object_name} not found"
+
+                if not hasattr(obj, 'Shape'):
+                    return f"Object {object_name} is not a shape object"
+
+                # Set mirror plane normal and origin based on plane parameter
+                if plane == "YZ":
+                    normal = FreeCAD.Vector(1, 0, 0)  # Normal to YZ plane
+                    mirror_point = FreeCAD.Vector(0, 0, 0)
+                elif plane == "XZ":
+                    normal = FreeCAD.Vector(0, 1, 0)  # Normal to XZ plane
+                    mirror_point = FreeCAD.Vector(0, 0, 0)
+                elif plane == "XY":
+                    normal = FreeCAD.Vector(0, 0, 1)  # Normal to XY plane
+                    mirror_point = FreeCAD.Vector(0, 0, 0)
+                else:
+                    return f"Invalid plane '{plane}'. Valid options: XY, XZ, YZ"
+
+                # Mirror the shape
+                import Part
+                mirrored_shape = obj.Shape.mirror(mirror_point, normal)
+
+                # Create mirrored object with appropriate name
+                if name:
+                    mirrored_obj = doc.addObject("Part::Feature", name)
+                else:
+                    mirrored_obj = doc.addObject("Part::Feature", f"{object_name}_mirrored")
+                mirrored_obj.Shape = mirrored_shape
+
+                doc.recompute()
+                return f"Mirrored {object_name} across {plane} plane at (0,0,0)"
+
+            except Exception as e:
+                return f"Error mirroring object: {e}"
+        return self._run_on_gui_thread(task)
 
     def _part_extrude(self, args: Dict[str, Any]) -> str:
         """Extrude a sketch or wire profile"""
-        try:
-            profile_sketch = args.get('profile_sketch', '')
-            height = args.get('height', 10)
-            direction = args.get('direction', 'z')
-            
-            doc = FreeCAD.ActiveDocument
-            if not doc:
-                return "No active document"
-            
-            sketch = doc.getObject(profile_sketch)
-            if not sketch:
-                return f"Sketch {profile_sketch} not found"
-            
-            # Determine extrusion vector
-            if direction == 'x':
-                vec = FreeCAD.Vector(height, 0, 0)
-            elif direction == 'y':
-                vec = FreeCAD.Vector(0, height, 0)
-            else:
-                vec = FreeCAD.Vector(0, 0, height)
-            
-            # Get the shape to extrude
-            if hasattr(sketch, 'Shape'):
-                shape = sketch.Shape
-                # Extrude the shape
-                import Part
-                if shape.Wires:
-                    # Create face from wire if needed
-                    face = Part.Face(shape.Wires[0])
-                    extruded = face.extrude(vec)
-                elif shape.Faces:
-                    extruded = shape.extrude(vec)
+        def task():
+            try:
+                profile_sketch = args.get('profile_sketch', '')
+                height = args.get('height', 10)
+                direction = args.get('direction', 'z')
+
+                doc = FreeCAD.ActiveDocument
+                if not doc:
+                    return "No active document"
+
+                sketch = doc.getObject(profile_sketch)
+                if not sketch:
+                    return f"Sketch {profile_sketch} not found"
+
+                # Determine extrusion vector
+                if direction == 'x':
+                    vec = FreeCAD.Vector(height, 0, 0)
+                elif direction == 'y':
+                    vec = FreeCAD.Vector(0, height, 0)
                 else:
-                    return f"Sketch {profile_sketch} has no valid wires or faces to extrude"
-                
-                # Create the extruded object
-                extrude_obj = doc.addObject("Part::Feature", f"{profile_sketch}_extruded")
-                extrude_obj.Shape = extruded
-                doc.recompute()
-                
-                return f"Extruded {profile_sketch} by {height}mm in {direction} direction"
-            else:
-                return f"Object {profile_sketch} is not a valid sketch"
-                
-        except Exception as e:
-            return f"Error extruding profile: {e}"
+                    vec = FreeCAD.Vector(0, 0, height)
+
+                # Get the shape to extrude
+                if hasattr(sketch, 'Shape'):
+                    shape = sketch.Shape
+                    # Extrude the shape
+                    import Part
+                    if shape.Wires:
+                        # Create face from wire if needed
+                        face = Part.Face(shape.Wires[0])
+                        extruded = face.extrude(vec)
+                    elif shape.Faces:
+                        extruded = shape.extrude(vec)
+                    else:
+                        return f"Sketch {profile_sketch} has no valid wires or faces to extrude"
+
+                    # Create the extruded object
+                    extrude_obj = doc.addObject("Part::Feature", f"{profile_sketch}_extruded")
+                    extrude_obj.Shape = extruded
+                    doc.recompute()
+
+                    return f"Extruded {profile_sketch} by {height}mm in {direction} direction"
+                else:
+                    return f"Object {profile_sketch} is not a valid sketch"
+
+            except Exception as e:
+                return f"Error extruding profile: {e}"
+        return self._run_on_gui_thread(task)
 
     def _part_revolve(self, args: Dict[str, Any]) -> str:
         """Revolve a sketch profile around an axis"""
-        try:
-            profile_sketch = args.get('profile_sketch', '')
-            angle = args.get('angle', 360)
-            axis = args.get('axis', 'z').lower()
-            
-            doc = FreeCAD.ActiveDocument
-            if not doc:
-                return "No active document"
-            
-            sketch = doc.getObject(profile_sketch)
-            if not sketch:
-                return f"Sketch {profile_sketch} not found"
-            
-            # Define revolution axis
-            if axis == 'x':
-                axis_vec = FreeCAD.Vector(1, 0, 0)
-            elif axis == 'y':
-                axis_vec = FreeCAD.Vector(0, 1, 0)
-            else:
-                axis_vec = FreeCAD.Vector(0, 0, 1)
-            
-            # Get the shape to revolve
-            if hasattr(sketch, 'Shape'):
-                shape = sketch.Shape
-                import Part
-                
-                # Get position for revolution axis
-                pos = FreeCAD.Vector(0, 0, 0)
-                if hasattr(sketch, 'Placement'):
-                    pos = sketch.Placement.Base
-                
-                # Revolve the shape
-                if shape.Wires:
-                    # Create face from wire if needed
-                    face = Part.Face(shape.Wires[0])
-                    revolved = face.revolve(pos, axis_vec, angle)
-                elif shape.Faces:
-                    revolved = shape.Faces[0].revolve(pos, axis_vec, angle)
+        def task():
+            try:
+                profile_sketch = args.get('profile_sketch', '')
+                angle = args.get('angle', 360)
+                axis = args.get('axis', 'z').lower()
+
+                doc = FreeCAD.ActiveDocument
+                if not doc:
+                    return "No active document"
+
+                sketch = doc.getObject(profile_sketch)
+                if not sketch:
+                    return f"Sketch {profile_sketch} not found"
+
+                # Define revolution axis
+                if axis == 'x':
+                    axis_vec = FreeCAD.Vector(1, 0, 0)
+                elif axis == 'y':
+                    axis_vec = FreeCAD.Vector(0, 1, 0)
                 else:
-                    return f"Sketch {profile_sketch} has no valid wires or faces to revolve"
-                
-                # Create the revolved object
-                revolve_obj = doc.addObject("Part::Feature", f"{profile_sketch}_revolved")
-                revolve_obj.Shape = revolved
-                doc.recompute()
-                
-                return f"Revolved {profile_sketch} by {angle}° around {axis} axis"
-            else:
-                return f"Object {profile_sketch} is not a valid sketch"
-                
-        except Exception as e:
-            return f"Error revolving profile: {e}"
+                    axis_vec = FreeCAD.Vector(0, 0, 1)
+
+                # Get the shape to revolve
+                if hasattr(sketch, 'Shape'):
+                    shape = sketch.Shape
+                    import Part
+
+                    # Get position for revolution axis
+                    pos = FreeCAD.Vector(0, 0, 0)
+                    if hasattr(sketch, 'Placement'):
+                        pos = sketch.Placement.Base
+
+                    # Revolve the shape
+                    if shape.Wires:
+                        # Create face from wire if needed
+                        face = Part.Face(shape.Wires[0])
+                        revolved = face.revolve(pos, axis_vec, angle)
+                    elif shape.Faces:
+                        revolved = shape.Faces[0].revolve(pos, axis_vec, angle)
+                    else:
+                        return f"Sketch {profile_sketch} has no valid wires or faces to revolve"
+
+                    # Create the revolved object
+                    revolve_obj = doc.addObject("Part::Feature", f"{profile_sketch}_revolved")
+                    revolve_obj.Shape = revolved
+                    doc.recompute()
+
+                    return f"Revolved {profile_sketch} by {angle}° around {axis} axis"
+                else:
+                    return f"Object {profile_sketch} is not a valid sketch"
+
+            except Exception as e:
+                return f"Error revolving profile: {e}"
+        return self._run_on_gui_thread(task)
 
     def _partdesign_groove(self, args: Dict[str, Any]) -> str:
         """PartDesign groove - revolve sketch to cut material"""
