@@ -32,10 +32,13 @@ async def main():
     # Check if FreeCAD is available (cross-platform)
     if platform.system() == "Windows":
         socket_path = "localhost:23456"
-        freecad_available = True  # We'll check connection when needed
     else:
         socket_path = "/tmp/freecad_mcp.sock"
-        freecad_available = os.path.exists(socket_path)
+
+    def is_freecad_available() -> bool:
+        if platform.system() == "Windows":
+            return True
+        return os.path.exists(socket_path)
     
     async def send_to_freecad(tool_name: str, args: dict) -> str:
         """Send command to FreeCAD via socket (cross-platform)"""
@@ -127,7 +130,7 @@ async def main():
         ]
         
         # Add Phase 1 Smart Dispatchers if socket is available
-        if freecad_available:
+        if is_freecad_available():
             smart_dispatchers = [
                 types.Tool(
                     name="partdesign_operations", 
@@ -308,10 +311,11 @@ async def main():
         """Handle tool calls with smart dispatcher routing"""
         
         if name == "check_freecad_connection":
+            connected = is_freecad_available()
             status = {
-                "freecad_socket_exists": freecad_available,
+                "freecad_socket_exists": connected,
                 "socket_path": socket_path,
-                "status": "FreeCAD running with AI Copilot workbench" if freecad_available 
+                "status": "FreeCAD running with AI Copilot workbench" if connected
                          else "FreeCAD not running. Please start FreeCAD and switch to AI Copilot workbench"
             }
             return [types.TextContent(
