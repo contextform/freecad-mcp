@@ -38,11 +38,66 @@ function logError(message) {
   log(`❌ ${message}`, 'red');
 }
 
-// Get OS-specific FreeCAD Mod directory
-function getFreeCadModDir() {
+// Candidate freecadcmd locations/commands to query FreeCAD's real user data dir
+function getFreeCadCmdCandidates() {
   const platform = os.platform();
   const home = os.homedir();
-  
+
+  switch (platform) {
+    case 'darwin':
+      return ['/Applications/FreeCAD.app/Contents/Resources/bin/freecadcmd'];
+    case 'linux':
+      return ['freecadcmd'];
+    case 'win32':
+      return [
+        'C:\\Program Files\\FreeCAD\\bin\\FreeCADCmd.exe',
+        'C:\\Program Files (x86)\\FreeCAD\\bin\\FreeCADCmd.exe',
+        'C:\\FreeCAD\\bin\\FreeCADCmd.exe',
+        path.join(home, 'AppData\\Local\\FreeCAD\\FreeCADCmd.exe'),
+        'FreeCADCmd.exe'
+      ];
+    default:
+      return [];
+  }
+}
+
+// Ask FreeCAD itself for its user data directory (handles versioned dirs like
+// .../FreeCAD/v1-1/ that FreeCAD 1.1+ uses instead of the old unversioned path).
+// Returns null if it can't be determined, so callers can fall back to guessing.
+//
+// Other installed Mod addons can print their own startup messages as a side
+// effect of `import FreeCAD` (it auto-loads them), which would otherwise
+// corrupt naive stdout parsing -- so we tag our line with a marker and only
+// read that line back out.
+function getFreeCadUserDataDir() {
+  const MARKER = '__FREECAD_USER_DIR__:';
+  for (const cmd of getFreeCadCmdCandidates()) {
+    try {
+      const out = execSync(
+        `"${cmd}" -c "import FreeCAD; print('${MARKER}' + FreeCAD.getUserAppDataDir())"`,
+        { timeout: 15000, stdio: ['ignore', 'pipe', 'ignore'], encoding: 'utf8' }
+      );
+      const line = out.split('\n').map(l => l.trim()).find(l => l.startsWith(MARKER));
+      if (line) return line.slice(MARKER.length).trim();
+    } catch {
+      // Try next candidate
+    }
+  }
+  return null;
+}
+
+// Get OS-specific FreeCAD Mod directory
+function getFreeCadModDir() {
+  const detected = getFreeCadUserDataDir();
+  if (detected) {
+    return path.join(detected, 'Mod');
+  }
+
+  // Fallback: guess based on platform (older FreeCAD without versioned dirs,
+  // or freecadcmd not found/on PATH)
+  const platform = os.platform();
+  const home = os.homedir();
+
   switch (platform) {
     case 'darwin': // macOS
       return path.join(home, 'Library/Application Support/FreeCAD/Mod');
