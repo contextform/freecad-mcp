@@ -251,17 +251,21 @@ class FreeCADSocketServer:
                 else:
                     # Use Unix socket
                     self.server_socket = socket.socket(socket_family, socket.SOCK_STREAM)
-                    self.server_socket.bind(self.socket_path)
                     # execute_python runs whatever code the client sends with no
                     # authentication of its own - restrict the socket file to the
                     # owner so at least only this machine's user can reach it, not
                     # every local user/process. (The TCP fallback branch above has
                     # no filesystem-permission equivalent; a shared auth token is
-                    # the right fix there and is a larger, separate change.)
+                    # the right fix there - tracked as a follow-up.)
+                    #
+                    # The restrictive umask applies for the duration of bind() itself,
+                    # so the socket file never briefly exists with default (wider)
+                    # permissions the way a chmod-after-bind would leave it.
+                    old_umask = os.umask(0o177)
                     try:
-                        os.chmod(self.socket_path, 0o600)
-                    except OSError as e:
-                        FreeCAD.Console.PrintWarning(f"Could not restrict socket permissions: {e}\n")
+                        self.server_socket.bind(self.socket_path)
+                    finally:
+                        os.umask(old_umask)
                     self.server_socket.listen(5)
                     FreeCAD.Console.PrintMessage(f"Socket server started on {self.socket_path} (Unix socket)\n")
             
@@ -319,6 +323,12 @@ class FreeCADSocketServer:
 
     def _handle_client(self, client_socket):
         """Handle individual client connections"""
+        # Bytes already read but not yet consumed by a parsed message. When a
+        # client pipelines two JSON messages in one write, raw_decode below
+        # only consumes the first - without carrying the remainder forward
+        # here, that second message would be silently discarded when buf
+        # resets on the next loop iteration.
+        pending = b""
         try:
             client_socket.settimeout(self._RECV_TIMEOUT_SECONDS)
             while self.is_running:
@@ -338,12 +348,34 @@ class FreeCADSocketServer:
                 # matter how much more arrives, so that case (and a stalled
                 # peer) is bounded by the socket timeout above and the size
                 # cap below rather than looping forever.
-                buf = b""
+                buf = pending
+                pending = b""
                 decoder = json.JSONDecoder()
                 message = None
                 oversized = False
                 timed_out = False
+                close_after = False
+
                 while True:
+                    if buf:
+                        try:
+                            text = buf.decode('utf-8')
+                            message, end_chars = decoder.raw_decode(text)
+                            # raw_decode's end offset is a character index
+                            # into the decoded string, not a byte index into
+                            # buf - re-encode the consumed prefix to convert
+                            # it back, so multi-byte UTF-8 content doesn't
+                            # misalign the leftover slice.
+                            end_bytes = len(text[:end_chars].encode('utf-8'))
+                            pending = buf[end_bytes:]
+                            break  # got one complete JSON value from the head of the buffer
+                        except (ValueError, UnicodeDecodeError):
+                            pass  # partial (or, so far, invalid) - read more
+
+                    if len(buf) > self._MAX_MESSAGE_BYTES:
+                        oversized = True
+                        break
+
                     try:
                         chunk = client_socket.recv(self._RECV_CHUNK_BYTES)
                     except socket.timeout:
@@ -352,18 +384,9 @@ class FreeCADSocketServer:
                     if not chunk:
                         break
                     buf += chunk
-                    if len(buf) > self._MAX_MESSAGE_BYTES:
-                        oversized = True
-                        break
-                    try:
-                        text = buf.decode('utf-8')
-                        message, _end = decoder.raw_decode(text)
-                        break  # got one complete JSON value from the head of the buffer
-                    except (ValueError, UnicodeDecodeError):
-                        continue  # partial message so far, keep reading
 
                 if not buf:
-                    break  # peer closed with no data
+                    break  # peer closed with nothing left to process
 
                 if message is not None:
                     response = self._process_command(json.dumps(message))
@@ -372,6 +395,12 @@ class FreeCADSocketServer:
                         "success": False,
                         "error": f"Request rejected: payload exceeded {self._MAX_MESSAGE_BYTES} bytes"
                     })
+                    # There's no length-prefixed framing, so once a message is
+                    # known to be oversized there's no reliable way to know
+                    # where it ends - continuing to read from this connection
+                    # would just try to parse whatever's left of it as a new
+                    # command. Reject and close instead of guessing.
+                    close_after = True
                 elif timed_out:
                     response = json.dumps({
                         "success": False,
@@ -384,7 +413,14 @@ class FreeCADSocketServer:
                     })
 
                 if response:
-                    client_socket.send(response.encode('utf-8'))
+                    # send() can write fewer bytes than requested; sendall()
+                    # loops until the whole response is written, which matters
+                    # here since a screenshot response is a base64 PNG that
+                    # routinely exceeds one socket buffer.
+                    client_socket.sendall(response.encode('utf-8'))
+
+                if close_after:
+                    break
 
         except Exception as e:
             FreeCAD.Console.PrintError(f"Client handler error: {e}\n")
@@ -411,6 +447,22 @@ class FreeCADSocketServer:
         dequeue and report that stale value as its own. A private queue per
         call removes the possibility of cross-request contamination instead
         of just tolerating it.
+
+        NOTE on the success flag's real coverage: dispatch_task publishes
+        (True, result) unless _execute_tool itself raises, in which case it
+        publishes (False, "Error executing ..."). That correctly covers an
+        unhandled exception escaping the dispatcher (an unknown tool_name,
+        say) and the 20s-timeout case below. It does NOT cover the much more
+        common case where an individual tool method (create_box,
+        fillet_edges, ...) catches its own exception internally and returns
+        an "Error ..." string as an ordinary return value - none of those
+        ~30 methods raise on failure, they all return a message, so
+        dispatch_task has no exception to catch and success stays True for
+        those. Making success accurate for that case too would mean
+        changing what every tool method returns (a (bool, message) pair
+        instead of a bare string) and updating every client that currently
+        reads result as plain text - a real API change, not a quick fix, so
+        it's intentionally left out of this PR.
         """
         try:
             # Parse JSON command
@@ -423,18 +475,18 @@ class FreeCADSocketServer:
             response_queue = queue.Queue()
 
             # Route to appropriate handler on the main GUI thread. The task
-            # publishes its own result rather than returning one, since
-            # process_gui_tasks no longer forwards return values anywhere.
+            # publishes its own (succeeded, result) pair rather than
+            # returning one, since process_gui_tasks no longer forwards
+            # return values anywhere.
             def dispatch_task():
                 try:
-                    response_queue.put(self._execute_tool(tool_name, args))
+                    response_queue.put((True, self._execute_tool(tool_name, args)))
                 except Exception as e:
-                    response_queue.put(f"Error executing {tool_name}: {e}")
+                    response_queue.put((False, f"Error executing {tool_name}: {e}"))
 
             gui_task_queue.put(dispatch_task)
             try:
-                result = response_queue.get(timeout=20.0)
-                succeeded = True
+                succeeded, result = response_queue.get(timeout=20.0)
             except queue.Empty:
                 result = f"Timeout waiting for '{tool_name}' to complete"
                 succeeded = False
@@ -1063,7 +1115,26 @@ class FreeCADSocketServer:
             name = args.get('name', 'Fillet')
             auto_select_all = args.get('auto_select_all', False)
             edges = args.get('edges', [])  # Allow explicit edge list
-            
+
+            # edge_filter only means anything on the auto-select path below -
+            # interactive selection and an explicit edges list already use
+            # exactly the edges the caller specified, so a geometric filter
+            # has nothing to apply to there. Reject it instead of silently
+            # ignoring it, so a caller who passes edge_filter='vertical'
+            # without auto_select_all finds out immediately rather than
+            # getting every edge (interactive) or exactly their explicit list
+            # (edges) with no indication the filter was never used.
+            edge_filter = args.get('edge_filter', 'all')
+            if edge_filter not in ('all', 'vertical'):
+                return f"Unknown edge_filter '{edge_filter}'. Supported: all, vertical"
+            if edge_filter != 'all' and not auto_select_all:
+                return (
+                    f"edge_filter='{edge_filter}' only applies with auto_select_all: "
+                    "true. Interactive selection and an explicit edges list use "
+                    "exactly the edges you specify, so a geometric filter doesn't "
+                    "apply to them."
+                )
+
             # Check if this is continuing a selection
             if args.get('_continue_selection'):
                 operation_id = args.get('_operation_id')
