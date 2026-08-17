@@ -32,22 +32,29 @@ except ImportError:
 #     FreeCADReActAgent = None
 FreeCADReActAgent = None  # Temporarily disabled
 
-# GUI task queue for thread-safe document operations
+# GUI task queue for thread-safe document operations.
+#
+# Each queued task is a zero-arg callable that is responsible for publishing
+# its own result (e.g. to a Queue it closes over) - process_gui_tasks does
+# not do that on the caller's behalf. Earlier this pushed every task's return
+# value onto one shared response queue, which desynchronized concurrent (or
+# timed-out) requests: a slow task's result could land in the queue after its
+# own caller gave up, and the next unrelated request would then dequeue and
+# report that stale value as its own result. A per-request queue removes the
+# shared state instead of trying to keep two callers' reads in sync.
 gui_task_queue = queue.Queue()
-gui_response_queue = queue.Queue()
 
 def process_gui_tasks():
     """Process GUI tasks in the main Qt thread"""
     while not gui_task_queue.empty():
         try:
             task = gui_task_queue.get_nowait()
-            result = task()
-            gui_response_queue.put(result)
+            task()
         except queue.Empty:
             break
         except Exception as e:
-            gui_response_queue.put(f"GUI task error: {e}")
-    
+            FreeCAD.Console.PrintError(f"GUI task error: {e}\n")
+
     # Schedule next processing
     QtCore.QTimer.singleShot(100, process_gui_tasks)
 
@@ -245,6 +252,16 @@ class FreeCADSocketServer:
                     # Use Unix socket
                     self.server_socket = socket.socket(socket_family, socket.SOCK_STREAM)
                     self.server_socket.bind(self.socket_path)
+                    # execute_python runs whatever code the client sends with no
+                    # authentication of its own - restrict the socket file to the
+                    # owner so at least only this machine's user can reach it, not
+                    # every local user/process. (The TCP fallback branch above has
+                    # no filesystem-permission equivalent; a shared auth token is
+                    # the right fix there and is a larger, separate change.)
+                    try:
+                        os.chmod(self.socket_path, 0o600)
+                    except OSError as e:
+                        FreeCAD.Console.PrintWarning(f"Could not restrict socket permissions: {e}\n")
                     self.server_socket.listen(5)
                     FreeCAD.Console.PrintMessage(f"Socket server started on {self.socket_path} (Unix socket)\n")
             
@@ -284,56 +301,116 @@ class FreeCADSocketServer:
                     FreeCAD.Console.PrintError(f"Server loop error: {e}\n")
                 break
                 
+    # A malformed or pipelined payload must not stall the connection forever,
+    # and a pathological/oversized payload must not grow the buffer without
+    # bound - both are bounded here rather than trusting the client.
+    #
+    # 2MB is already generous for a JSON command + an execute_python script
+    # (legitimate scripts run tens of KB at most) - keeping the cap small
+    # matters because re-decoding the whole accumulated buffer on every
+    # chunk is O(n^2) in message size (flagged in review, confirmed by
+    # testing: a 10MB cap with 4KB reads took long enough to look hung).
+    # Reading in 64KB chunks instead of 4KB cuts the iteration count ~16x,
+    # so worst case (cap-sized message, one decode attempt per chunk) stays
+    # well under a second instead of tens of seconds.
+    _MAX_MESSAGE_BYTES = 2 * 1024 * 1024  # 2MB
+    _RECV_CHUNK_BYTES = 65536
+    _RECV_TIMEOUT_SECONDS = 30.0
+
     def _handle_client(self, client_socket):
         """Handle individual client connections"""
         try:
+            client_socket.settimeout(self._RECV_TIMEOUT_SECONDS)
             while self.is_running:
-                # Receive data, accumulating chunks until a complete JSON message
-                # is available. A single recv(4096) only returns a partial payload
-                # for larger messages (e.g. bigger execute_python scripts), which
-                # used to produce "Unterminated string" JSON parse errors for any
-                # request over ~4KB.
+                # Receive data, accumulating chunks until one complete JSON
+                # message is available. A single recv(4096) only returns a
+                # partial payload for larger messages (e.g. bigger
+                # execute_python scripts), which used to produce "Unterminated
+                # string" JSON parse errors for any request over ~4KB.
+                #
+                # json.JSONDecoder.raw_decode (rather than json.loads) parses
+                # one complete JSON value starting at the head of the buffer
+                # and reports where it ended, so it succeeds as soon as the
+                # first full message has arrived even if trailing bytes from a
+                # second, pipelined message are already in the buffer -
+                # json.loads would raise "Extra data" on that and never
+                # recover. Genuinely malformed JSON still can't parse no
+                # matter how much more arrives, so that case (and a stalled
+                # peer) is bounded by the socket timeout above and the size
+                # cap below rather than looping forever.
                 buf = b""
+                decoder = json.JSONDecoder()
+                message = None
+                oversized = False
+                timed_out = False
                 while True:
-                    chunk = client_socket.recv(4096)
+                    try:
+                        chunk = client_socket.recv(self._RECV_CHUNK_BYTES)
+                    except socket.timeout:
+                        timed_out = True
+                        break
                     if not chunk:
                         break
                     buf += chunk
+                    if len(buf) > self._MAX_MESSAGE_BYTES:
+                        oversized = True
+                        break
                     try:
-                        json.loads(buf.decode('utf-8'))
-                        break  # accumulated a complete, valid JSON message
+                        text = buf.decode('utf-8')
+                        message, _end = decoder.raw_decode(text)
+                        break  # got one complete JSON value from the head of the buffer
                     except (ValueError, UnicodeDecodeError):
                         continue  # partial message so far, keep reading
-                data = buf
-                if not data:
-                    break
 
-                # Process the command
-                response = self._process_command(data.decode('utf-8'))
-                
-                # Send response
+                if not buf:
+                    break  # peer closed with no data
+
+                if message is not None:
+                    response = self._process_command(json.dumps(message))
+                elif oversized:
+                    response = json.dumps({
+                        "success": False,
+                        "error": f"Request rejected: payload exceeded {self._MAX_MESSAGE_BYTES} bytes"
+                    })
+                elif timed_out:
+                    response = json.dumps({
+                        "success": False,
+                        "error": f"Request rejected: no complete JSON message within {self._RECV_TIMEOUT_SECONDS}s"
+                    })
+                else:
+                    response = json.dumps({
+                        "success": False,
+                        "error": "Request rejected: malformed JSON"
+                    })
+
                 if response:
                     client_socket.send(response.encode('utf-8'))
-                    
+
         except Exception as e:
             FreeCAD.Console.PrintError(f"Client handler error: {e}\n")
         finally:
             client_socket.close()
             if client_socket in self.client_connections:
                 self.client_connections.remove(client_socket)
-                
+
     def _process_command(self, command_str: str) -> str:
         """Process incoming command and return response.
 
-        Dispatch runs on the main Qt thread via gui_task_queue/gui_response_queue,
-        not on this client-handler thread. FreeCAD's document/view APIs (recompute,
-        addObject on a GUI-linked document, FreeCADGui calls) abort the process with
-        SIGABRT if touched from a background thread, so every tool is routed through
-        the same main-thread queue here rather than each tool handling it individually.
-        NOTE: gui_response_queue is shared across all client connections; this assumes
-        requests are handled one at a time (true for the current single-connection
-        client scripts). Concurrent overlapping requests could read each other's
-        results.
+        Dispatch runs on the main Qt thread via gui_task_queue, not on this
+        client-handler thread. FreeCAD's document/view APIs (recompute,
+        addObject on a GUI-linked document, FreeCADGui calls) abort the
+        process with SIGABRT if touched from a background thread, so every
+        tool is routed through the same main-thread queue here rather than
+        each tool handling it individually.
+
+        Each call gets its own private response_queue (a local variable
+        closed over by dispatch_task) rather than sharing one across
+        requests - a shared queue meant that a request which hit the 20s
+        timeout would still have its real result delivered late by
+        process_gui_tasks, and the *next* unrelated request's get() would
+        dequeue and report that stale value as its own. A private queue per
+        call removes the possibility of cross-request contamination instead
+        of just tolerating it.
         """
         try:
             # Parse JSON command
@@ -343,21 +420,27 @@ class FreeCADSocketServer:
             tool_name = command.get('tool')
             args = command.get('args', {})
 
-            # Route to appropriate handler on the main GUI thread
+            response_queue = queue.Queue()
+
+            # Route to appropriate handler on the main GUI thread. The task
+            # publishes its own result rather than returning one, since
+            # process_gui_tasks no longer forwards return values anywhere.
             def dispatch_task():
                 try:
-                    return self._execute_tool(tool_name, args)
+                    response_queue.put(self._execute_tool(tool_name, args))
                 except Exception as e:
-                    return f"Error executing {tool_name}: {e}"
+                    response_queue.put(f"Error executing {tool_name}: {e}")
 
             gui_task_queue.put(dispatch_task)
             try:
-                result = gui_response_queue.get(timeout=20.0)
+                result = response_queue.get(timeout=20.0)
+                succeeded = True
             except queue.Empty:
                 result = f"Timeout waiting for '{tool_name}' to complete"
+                succeeded = False
 
             return json.dumps({
-                "success": True,
+                "success": succeeded,
                 "result": result
             })
 
@@ -1091,6 +1174,8 @@ class FreeCADSocketServer:
             radius = args.get('radius', 1)
             name = args.get('name', 'Fillet')
             edge_filter = args.get('edge_filter', 'all')
+            if edge_filter not in ('all', 'vertical'):
+                return f"Unknown edge_filter '{edge_filter}'. Supported: all, vertical"
 
             doc = FreeCAD.ActiveDocument
             if not doc:
@@ -1103,16 +1188,18 @@ class FreeCADSocketServer:
             if not hasattr(obj, 'Shape') or not obj.Shape.Edges:
                 return f"Object {object_name} has no edges"
 
+            import Part
             edge_list = []
             for i, edge in enumerate(obj.Shape.Edges):
                 if edge_filter == 'vertical':
-                    v = edge.Vertexes
-                    if len(v) != 2:
+                    # Check the underlying curve geometry, not endpoint deltas -
+                    # an arc or spline can have endpoints that share X/Y without
+                    # the edge itself being a straight vertical line.
+                    curve = edge.Curve
+                    if not isinstance(curve, Part.Line):
                         continue
-                    dz = abs(v[1].Point.z - v[0].Point.z)
-                    dx = abs(v[1].Point.x - v[0].Point.x)
-                    dy = abs(v[1].Point.y - v[0].Point.y)
-                    if dz <= 1e-6 or dx > 1e-6 or dy > 1e-6:
+                    direction = FreeCAD.Vector(curve.Direction).normalize()
+                    if abs(abs(direction.z) - 1.0) > 1e-6:
                         continue
                 edge_list.append((i + 1, radius, radius))
 
@@ -2097,12 +2184,17 @@ class FreeCADSocketServer:
             with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp:
                 tmp_path = tmp.name
 
-            view.saveImage(tmp_path, width, height, "White")
-
-            with open(tmp_path, 'rb') as f:
-                image_data = base64.b64encode(f.read()).decode('utf-8')
-
-            os.unlink(tmp_path)
+            try:
+                view.saveImage(tmp_path, width, height, "White")
+                with open(tmp_path, 'rb') as f:
+                    image_data = base64.b64encode(f.read()).decode('utf-8')
+            finally:
+                # Clean up even if saveImage/open raised - otherwise every
+                # failed screenshot leaves a PNG behind in the temp directory.
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
 
             return json.dumps({
                 "image": f"data:image/png;base64,{image_data}",
