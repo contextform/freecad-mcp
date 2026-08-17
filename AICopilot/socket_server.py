@@ -32,22 +32,29 @@ except ImportError:
 #     FreeCADReActAgent = None
 FreeCADReActAgent = None  # Temporarily disabled
 
-# GUI task queue for thread-safe document operations
+# GUI task queue for thread-safe document operations.
+#
+# Each queued task is a zero-arg callable that is responsible for publishing
+# its own result (e.g. to a Queue it closes over) - process_gui_tasks does
+# not do that on the caller's behalf. Earlier this pushed every task's return
+# value onto one shared response queue, which desynchronized concurrent (or
+# timed-out) requests: a slow task's result could land in the queue after its
+# own caller gave up, and the next unrelated request would then dequeue and
+# report that stale value as its own result. A per-request queue removes the
+# shared state instead of trying to keep two callers' reads in sync.
 gui_task_queue = queue.Queue()
-gui_response_queue = queue.Queue()
 
 def process_gui_tasks():
     """Process GUI tasks in the main Qt thread"""
     while not gui_task_queue.empty():
         try:
             task = gui_task_queue.get_nowait()
-            result = task()
-            gui_response_queue.put(result)
+            task()
         except queue.Empty:
             break
         except Exception as e:
-            gui_response_queue.put(f"GUI task error: {e}")
-    
+            FreeCAD.Console.PrintError(f"GUI task error: {e}\n")
+
     # Schedule next processing
     QtCore.QTimer.singleShot(100, process_gui_tasks)
 
@@ -244,7 +251,21 @@ class FreeCADSocketServer:
                 else:
                     # Use Unix socket
                     self.server_socket = socket.socket(socket_family, socket.SOCK_STREAM)
-                    self.server_socket.bind(self.socket_path)
+                    # execute_python runs whatever code the client sends with no
+                    # authentication of its own - restrict the socket file to the
+                    # owner so at least only this machine's user can reach it, not
+                    # every local user/process. (The TCP fallback branch above has
+                    # no filesystem-permission equivalent; a shared auth token is
+                    # the right fix there - tracked as a follow-up.)
+                    #
+                    # The restrictive umask applies for the duration of bind() itself,
+                    # so the socket file never briefly exists with default (wider)
+                    # permissions the way a chmod-after-bind would leave it.
+                    old_umask = os.umask(0o177)
+                    try:
+                        self.server_socket.bind(self.socket_path)
+                    finally:
+                        os.umask(old_umask)
                     self.server_socket.listen(5)
                     FreeCAD.Console.PrintMessage(f"Socket server started on {self.socket_path} (Unix socket)\n")
             
@@ -284,47 +305,197 @@ class FreeCADSocketServer:
                     FreeCAD.Console.PrintError(f"Server loop error: {e}\n")
                 break
                 
+    # A malformed or pipelined payload must not stall the connection forever,
+    # and a pathological/oversized payload must not grow the buffer without
+    # bound - both are bounded here rather than trusting the client.
+    #
+    # 2MB is already generous for a JSON command + an execute_python script
+    # (legitimate scripts run tens of KB at most) - keeping the cap small
+    # matters because re-decoding the whole accumulated buffer on every
+    # chunk is O(n^2) in message size (flagged in review, confirmed by
+    # testing: a 10MB cap with 4KB reads took long enough to look hung).
+    # Reading in 64KB chunks instead of 4KB cuts the iteration count ~16x,
+    # so worst case (cap-sized message, one decode attempt per chunk) stays
+    # well under a second instead of tens of seconds.
+    _MAX_MESSAGE_BYTES = 2 * 1024 * 1024  # 2MB
+    _RECV_CHUNK_BYTES = 65536
+    _RECV_TIMEOUT_SECONDS = 30.0
+
     def _handle_client(self, client_socket):
         """Handle individual client connections"""
+        # Bytes already read but not yet consumed by a parsed message. When a
+        # client pipelines two JSON messages in one write, raw_decode below
+        # only consumes the first - without carrying the remainder forward
+        # here, that second message would be silently discarded when buf
+        # resets on the next loop iteration.
+        pending = b""
         try:
+            client_socket.settimeout(self._RECV_TIMEOUT_SECONDS)
             while self.is_running:
-                # Receive data
-                data = client_socket.recv(4096)
-                if not data:
-                    break
-                    
-                # Process the command
-                response = self._process_command(data.decode('utf-8'))
-                
-                # Send response
+                # Receive data, accumulating chunks until one complete JSON
+                # message is available. A single recv(4096) only returns a
+                # partial payload for larger messages (e.g. bigger
+                # execute_python scripts), which used to produce "Unterminated
+                # string" JSON parse errors for any request over ~4KB.
+                #
+                # json.JSONDecoder.raw_decode (rather than json.loads) parses
+                # one complete JSON value starting at the head of the buffer
+                # and reports where it ended, so it succeeds as soon as the
+                # first full message has arrived even if trailing bytes from a
+                # second, pipelined message are already in the buffer -
+                # json.loads would raise "Extra data" on that and never
+                # recover. Genuinely malformed JSON still can't parse no
+                # matter how much more arrives, so that case (and a stalled
+                # peer) is bounded by the socket timeout above and the size
+                # cap below rather than looping forever.
+                buf = pending
+                pending = b""
+                decoder = json.JSONDecoder()
+                message = None
+                oversized = False
+                timed_out = False
+                close_after = False
+
+                while True:
+                    if buf:
+                        try:
+                            text = buf.decode('utf-8')
+                            message, end_chars = decoder.raw_decode(text)
+                            # raw_decode's end offset is a character index
+                            # into the decoded string, not a byte index into
+                            # buf - re-encode the consumed prefix to convert
+                            # it back, so multi-byte UTF-8 content doesn't
+                            # misalign the leftover slice.
+                            end_bytes = len(text[:end_chars].encode('utf-8'))
+                            pending = buf[end_bytes:]
+                            break  # got one complete JSON value from the head of the buffer
+                        except (ValueError, UnicodeDecodeError):
+                            pass  # partial (or, so far, invalid) - read more
+
+                    if len(buf) > self._MAX_MESSAGE_BYTES:
+                        oversized = True
+                        break
+
+                    try:
+                        chunk = client_socket.recv(self._RECV_CHUNK_BYTES)
+                    except socket.timeout:
+                        timed_out = True
+                        break
+                    if not chunk:
+                        break
+                    buf += chunk
+
+                if not buf:
+                    break  # peer closed with nothing left to process
+
+                if message is not None:
+                    response = self._process_command(json.dumps(message))
+                elif oversized:
+                    response = json.dumps({
+                        "success": False,
+                        "error": f"Request rejected: payload exceeded {self._MAX_MESSAGE_BYTES} bytes"
+                    })
+                    # There's no length-prefixed framing, so once a message is
+                    # known to be oversized there's no reliable way to know
+                    # where it ends - continuing to read from this connection
+                    # would just try to parse whatever's left of it as a new
+                    # command. Reject and close instead of guessing.
+                    close_after = True
+                elif timed_out:
+                    response = json.dumps({
+                        "success": False,
+                        "error": f"Request rejected: no complete JSON message within {self._RECV_TIMEOUT_SECONDS}s"
+                    })
+                else:
+                    response = json.dumps({
+                        "success": False,
+                        "error": "Request rejected: malformed JSON"
+                    })
+
                 if response:
-                    client_socket.send(response.encode('utf-8'))
-                    
+                    # send() can write fewer bytes than requested; sendall()
+                    # loops until the whole response is written, which matters
+                    # here since a screenshot response is a base64 PNG that
+                    # routinely exceeds one socket buffer.
+                    client_socket.sendall(response.encode('utf-8'))
+
+                if close_after:
+                    break
+
         except Exception as e:
             FreeCAD.Console.PrintError(f"Client handler error: {e}\n")
         finally:
             client_socket.close()
             if client_socket in self.client_connections:
                 self.client_connections.remove(client_socket)
-                
+
     def _process_command(self, command_str: str) -> str:
-        """Process incoming command and return response"""
+        """Process incoming command and return response.
+
+        Dispatch runs on the main Qt thread via gui_task_queue, not on this
+        client-handler thread. FreeCAD's document/view APIs (recompute,
+        addObject on a GUI-linked document, FreeCADGui calls) abort the
+        process with SIGABRT if touched from a background thread, so every
+        tool is routed through the same main-thread queue here rather than
+        each tool handling it individually.
+
+        Each call gets its own private response_queue (a local variable
+        closed over by dispatch_task) rather than sharing one across
+        requests - a shared queue meant that a request which hit the 20s
+        timeout would still have its real result delivered late by
+        process_gui_tasks, and the *next* unrelated request's get() would
+        dequeue and report that stale value as its own. A private queue per
+        call removes the possibility of cross-request contamination instead
+        of just tolerating it.
+
+        NOTE on the success flag's real coverage: dispatch_task publishes
+        (True, result) unless _execute_tool itself raises, in which case it
+        publishes (False, "Error executing ..."). That correctly covers an
+        unhandled exception escaping the dispatcher (an unknown tool_name,
+        say) and the 20s-timeout case below. It does NOT cover the much more
+        common case where an individual tool method (create_box,
+        fillet_edges, ...) catches its own exception internally and returns
+        an "Error ..." string as an ordinary return value - none of those
+        ~30 methods raise on failure, they all return a message, so
+        dispatch_task has no exception to catch and success stays True for
+        those. Making success accurate for that case too would mean
+        changing what every tool method returns (a (bool, message) pair
+        instead of a bare string) and updating every client that currently
+        reads result as plain text - a real API change, not a quick fix, so
+        it's intentionally left out of this PR.
+        """
         try:
             # Parse JSON command
             command = json.loads(command_str)
-            
+
             # Extract tool name and arguments
             tool_name = command.get('tool')
             args = command.get('args', {})
-            
-            # Route to appropriate handler
-            result = self._execute_tool(tool_name, args)
-            
+
+            response_queue = queue.Queue()
+
+            # Route to appropriate handler on the main GUI thread. The task
+            # publishes its own (succeeded, result) pair rather than
+            # returning one, since process_gui_tasks no longer forwards
+            # return values anywhere.
+            def dispatch_task():
+                try:
+                    response_queue.put((True, self._execute_tool(tool_name, args)))
+                except Exception as e:
+                    response_queue.put((False, f"Error executing {tool_name}: {e}"))
+
+            gui_task_queue.put(dispatch_task)
+            try:
+                succeeded, result = response_queue.get(timeout=20.0)
+            except queue.Empty:
+                result = f"Timeout waiting for '{tool_name}' to complete"
+                succeeded = False
+
             return json.dumps({
-                "success": True,
+                "success": succeeded,
                 "result": result
             })
-            
+
         except Exception as e:
             return json.dumps({
                 "success": False,
@@ -466,32 +637,27 @@ class FreeCADSocketServer:
             return f"Unknown tool: {tool_name}"
             
     def _create_box(self, args: Dict[str, Any]) -> str:
-        """Create a box with specified dimensions"""
+        """Create a box with specified dimensions.
+        Runs on the main thread because _process_command dispatches via gui_task_queue."""
         try:
             length = args.get('length', 10)
-            width = args.get('width', 10)  
+            width = args.get('width', 10)
             height = args.get('height', 10)
             x = args.get('x', 0)
             y = args.get('y', 0)
             z = args.get('z', 0)
-            
-            # Create document if needed
+
             doc = FreeCAD.ActiveDocument or FreeCAD.newDocument()
-            
-            # Create box
             box = doc.addObject("Part::Box", "Box")
             box.Length = length
             box.Width = width
             box.Height = height
             box.Placement.Base = FreeCAD.Vector(x, y, z)
-            
-            # Recompute and fit view
             doc.recompute()
             if FreeCADGui.ActiveDocument:
                 FreeCADGui.SendMsgToActiveView("ViewFit")
-            
             return f"Created box: {box.Name} ({length}x{width}x{height}mm) at ({x},{y},{z})"
-            
+
         except Exception as e:
             return f"Error creating box: {e}"
             
@@ -949,7 +1115,26 @@ class FreeCADSocketServer:
             name = args.get('name', 'Fillet')
             auto_select_all = args.get('auto_select_all', False)
             edges = args.get('edges', [])  # Allow explicit edge list
-            
+
+            # edge_filter only means anything on the auto-select path below -
+            # interactive selection and an explicit edges list already use
+            # exactly the edges the caller specified, so a geometric filter
+            # has nothing to apply to there. Reject it instead of silently
+            # ignoring it, so a caller who passes edge_filter='vertical'
+            # without auto_select_all finds out immediately rather than
+            # getting every edge (interactive) or exactly their explicit list
+            # (edges) with no indication the filter was never used.
+            edge_filter = args.get('edge_filter', 'all')
+            if edge_filter not in ('all', 'vertical'):
+                return f"Unknown edge_filter '{edge_filter}'. Supported: all, vertical"
+            if edge_filter != 'all' and not auto_select_all:
+                return (
+                    f"edge_filter='{edge_filter}' only applies with auto_select_all: "
+                    "true. Interactive selection and an explicit edges list use "
+                    "exactly the edges you specify, so a geometric filter doesn't "
+                    "apply to them."
+                )
+
             # Check if this is continuing a selection
             if args.get('_continue_selection'):
                 operation_id = args.get('_operation_id')
@@ -1053,35 +1238,53 @@ class FreeCADSocketServer:
             return f"Error creating fillet with selection: {e}"
             
     def _create_fillet_auto(self, args: Dict[str, Any]) -> str:
-        """Create fillet on all edges (original behavior)"""
+        """Create fillet on edges. Runs on the main thread (see _process_command).
+        If args['edge_filter'] == 'vertical', only fillets edges parallel to Z."""
         try:
             object_name = args.get('object_name', '')
             radius = args.get('radius', 1)
             name = args.get('name', 'Fillet')
-            
+            edge_filter = args.get('edge_filter', 'all')
+            if edge_filter not in ('all', 'vertical'):
+                return f"Unknown edge_filter '{edge_filter}'. Supported: all, vertical"
+
             doc = FreeCAD.ActiveDocument
             if not doc:
                 return "No active document"
-                
+
             obj = doc.getObject(object_name)
             if not obj:
                 return f"Object not found: {object_name}"
-                
-            # Create fillet (all edges)
+
+            if not hasattr(obj, 'Shape') or not obj.Shape.Edges:
+                return f"Object {object_name} has no edges"
+
+            import Part
+            edge_list = []
+            for i, edge in enumerate(obj.Shape.Edges):
+                if edge_filter == 'vertical':
+                    # Check the underlying curve geometry, not endpoint deltas -
+                    # an arc or spline can have endpoints that share X/Y without
+                    # the edge itself being a straight vertical line.
+                    curve = edge.Curve
+                    if not isinstance(curve, Part.Line):
+                        continue
+                    direction = FreeCAD.Vector(curve.Direction).normalize()
+                    if abs(abs(direction.z) - 1.0) > 1e-6:
+                        continue
+                edge_list.append((i + 1, radius, radius))
+
+            if not edge_list:
+                return f"No matching edges found for filter '{edge_filter}'"
+
             fillet = doc.addObject("Part::Fillet", name)
             fillet.Base = obj
-            
-            # Add all edges with same radius
-            if hasattr(obj, 'Shape') and obj.Shape.Edges:
-                edge_list = []
-                for i, edge in enumerate(obj.Shape.Edges):
-                    edge_list.append((i+1, radius, radius))
-                fillet.Edges = edge_list
-                
+            fillet.Edges = edge_list
             doc.recompute()
-            
-            return f"Created fillet: {fillet.Name} on all {len(obj.Shape.Edges)} edges with radius {radius}mm"
-            
+            if FreeCADGui.ActiveDocument:
+                FreeCADGui.SendMsgToActiveView("ViewFit")
+
+            return f"Created fillet: {fillet.Name} on {len(edge_list)} edge(s) (filter={edge_filter}) with radius {radius}mm"
         except Exception as e:
             return f"Error creating auto fillet: {e}"
     
@@ -2034,133 +2237,73 @@ class FreeCADSocketServer:
             return f"Error calculating mass properties: {e}"
     
     def _get_screenshot_gui_safe(self, args: Dict[str, Any]) -> str:
-        """Take screenshot of current view using GUI-safe thread queue"""
+        """Take screenshot of current view. Runs on the main thread (see _process_command)."""
         try:
             if not FreeCADGui.ActiveDocument:
                 return "No active document for screenshot"
-                
+
             import tempfile
             import base64
-            import time
-            
+
             width = args.get('width', 800)
             height = args.get('height', 600)
-            
-            # Define GUI task
-            def screenshot_task():
+
+            view = FreeCADGui.ActiveDocument.ActiveView
+            if not view:
+                return "Error taking screenshot: No active view"
+
+            with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp:
+                tmp_path = tmp.name
+
+            try:
+                view.saveImage(tmp_path, width, height, "White")
+                with open(tmp_path, 'rb') as f:
+                    image_data = base64.b64encode(f.read()).decode('utf-8')
+            finally:
+                # Clean up even if saveImage/open raised - otherwise every
+                # failed screenshot leaves a PNG behind in the temp directory.
                 try:
-                    view = FreeCADGui.ActiveDocument.ActiveView
-                    if not view:
-                        return {"error": "No active view"}
-                    
-                    # Create temporary file
-                    with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp:
-                        tmp_path = tmp.name
-                        
-                    # GUI-safe: Save image in main thread
-                    view.saveImage(tmp_path, width, height, "White")
-                    
-                    # Convert to base64
-                    with open(tmp_path, 'rb') as f:
-                        image_data = base64.b64encode(f.read()).decode('utf-8')
-                    
-                    # Cleanup
                     os.unlink(tmp_path)
-                    
-                    return {
-                        "success": True,
-                        "image": f"data:image/png;base64,{image_data}",
-                        "width": width,
-                        "height": height
-                    }
-                    
-                except Exception as e:
-                    return {"error": f"Screenshot task failed: {e}"}
-            
-            # Queue task and wait for result
-            gui_task_queue.put(screenshot_task)
-            
-            # Wait for result with timeout
-            start_time = time.time()
-            while time.time() - start_time < 10:  # 10 second timeout
-                try:
-                    result = gui_response_queue.get_nowait()
-                    if isinstance(result, dict):
-                        if "error" in result:
-                            return f"Error taking screenshot: {result['error']}"
-                        elif "success" in result:
-                            return json.dumps({
-                                "image": result["image"],
-                                "width": result["width"],
-                                "height": result["height"]
-                            })
-                    break
-                except queue.Empty:
-                    time.sleep(0.1)
-                    continue
-            
-            return "Screenshot timeout - GUI thread may be busy"
-            
+                except OSError:
+                    pass
+
+            return json.dumps({
+                "image": f"data:image/png;base64,{image_data}",
+                "width": width,
+                "height": height
+            })
+
         except Exception as e:
             return f"Error in screenshot setup: {e}"
-    
+
     def _set_view_gui_safe(self, args: Dict[str, Any]) -> str:
-        """Set view orientation using GUI-safe thread queue"""
+        """Set view orientation. Runs on the main thread (see _process_command)."""
         try:
             if not FreeCADGui.ActiveDocument:
                 return "No active document for view change"
-            
+
             view_type = args.get('view_type', 'isometric').lower()
-            import time
-            
-            # Define GUI task
-            def view_task():
-                try:
-                    # Map view types to FreeCAD commands
-                    views = {
-                        'top': 'Std_ViewTop',
-                        'bottom': 'Std_ViewBottom',
-                        'front': 'Std_ViewFront', 
-                        'rear': 'Std_ViewRear',
-                        'back': 'Std_ViewRear',
-                        'left': 'Std_ViewLeft',
-                        'right': 'Std_ViewRight',
-                        'isometric': 'Std_ViewIsometric',
-                        'iso': 'Std_ViewIsometric',
-                        'axonometric': 'Std_ViewAxonometric',
-                        'axo': 'Std_ViewAxonometric'
-                    }
-                    
-                    if view_type in views:
-                        # GUI-safe: Execute view command in main thread
-                        FreeCADGui.runCommand(views[view_type], 0)
-                        return {"success": True, "view": view_type}
-                    else:
-                        return {"error": f"Unknown view type: {view_type}"}
-                        
-                except Exception as e:
-                    return {"error": f"View task failed: {e}"}
-            
-            # Queue task and wait for result
-            gui_task_queue.put(view_task)
-            
-            # Wait for result with timeout
-            start_time = time.time()
-            while time.time() - start_time < 5:  # 5 second timeout
-                try:
-                    result = gui_response_queue.get_nowait()
-                    if isinstance(result, dict):
-                        if "error" in result:
-                            return f"Error setting view: {result['error']}"
-                        elif "success" in result:
-                            return f"✅ View set to {result['view']}"
-                    break
-                except queue.Empty:
-                    time.sleep(0.1)
-                    continue
-            
-            return "View change timeout - GUI thread may be busy"
-            
+
+            views = {
+                'top': 'Std_ViewTop',
+                'bottom': 'Std_ViewBottom',
+                'front': 'Std_ViewFront',
+                'rear': 'Std_ViewRear',
+                'back': 'Std_ViewRear',
+                'left': 'Std_ViewLeft',
+                'right': 'Std_ViewRight',
+                'isometric': 'Std_ViewIsometric',
+                'iso': 'Std_ViewIsometric',
+                'axonometric': 'Std_ViewAxonometric',
+                'axo': 'Std_ViewAxonometric'
+            }
+
+            if view_type not in views:
+                return f"Error setting view: Unknown view type: {view_type}"
+
+            FreeCADGui.runCommand(views[view_type], 0)
+            return f"✅ View set to {view_type}"
+
         except Exception as e:
             return f"Error in view setup: {e}"
             
@@ -2223,26 +2366,23 @@ class FreeCADSocketServer:
                     FreeCAD.Console.PrintError(f"Pre-flight FAILED: {e}\n")
                     return f"FreeCAD not ready for document operations: {e}"
             
-            # Create enhanced execution context
+            # Runs on the main thread (see _process_command) since exec'd code may touch document/view state
             exec_context = {
                 'FreeCAD': FreeCAD,
                 'FreeCADGui': FreeCADGui,
                 'doc': FreeCAD.ActiveDocument,
                 'print': lambda *args: FreeCAD.Console.PrintMessage('CODE: ' + ' '.join(str(arg) for arg in args) + '\n')
             }
-            
-            # Execute with detailed logging
+
             FreeCAD.Console.PrintMessage("EXEC: Starting code execution...\n")
-            
             try:
                 exec(code, exec_context)
                 FreeCAD.Console.PrintMessage("EXEC: Code completed successfully\n")
             except Exception as exec_error:
                 FreeCAD.Console.PrintError(f"EXEC: Code execution failed: {exec_error}\n")
                 FreeCAD.Console.PrintError(f"EXEC: Traceback: {traceback.format_exc()}\n")
-                raise exec_error
-            
-            # Return result if available
+                return f"Python execution error: {exec_error}"
+
             if 'result' in exec_context:
                 result = str(exec_context['result'])
                 FreeCAD.Console.PrintMessage(f"EXEC: Result: {result}\n")
@@ -2250,7 +2390,7 @@ class FreeCADSocketServer:
             else:
                 FreeCAD.Console.PrintMessage("EXEC: No explicit result, returning success\n")
                 return "Code executed successfully"
-                
+
         except Exception as e:
             error_msg = f"Python execution error: {e}"
             traceback_msg = traceback.format_exc()
@@ -2289,30 +2429,13 @@ class FreeCADSocketServer:
             return f"Error saving document: {e}"
     
     def _create_document_gui_safe(self, args: Dict[str, Any]) -> str:
-        """Create a new document using GUI-safe thread queue"""
+        """Create a new document. Runs on the main thread (see _process_command)."""
         try:
             name = args.get('document_name', args.get('name', 'Unnamed'))
-            
-            # Define GUI task
-            def create_doc_task():
-                try:
-                    doc = FreeCAD.newDocument(name)
-                    doc.recompute()
-                    FreeCAD.Console.PrintMessage(f"Document '{name}' created via GUI-safe MCP.\n")
-                    return f"✅ Document '{name}' created successfully"
-                except Exception as e:
-                    return f"Error creating document: {e}"
-            
-            # Queue task for GUI thread
-            gui_task_queue.put(create_doc_task)
-            
-            # Wait for result with timeout
-            try:
-                result = gui_response_queue.get(timeout=5.0)
-                return result
-            except queue.Empty:
-                return "Timeout waiting for document creation"
-                
+            doc = FreeCAD.newDocument(name)
+            doc.recompute()
+            FreeCAD.Console.PrintMessage(f"Document '{name}' created via MCP.\n")
+            return f"✅ Document '{name}' created successfully"
         except Exception as e:
             return f"Error in create_document: {e}"
             
